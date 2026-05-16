@@ -24,6 +24,7 @@ class Stream:
     video_id: str
     title: str = ""
     published_at: Optional[datetime] = None
+    stream_started_at: Optional[datetime] = None
     live_chat_id: str = ""
     duration_sec: int = 0
     chat_count: int = 0

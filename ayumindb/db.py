@@ -26,6 +26,7 @@ CREATE TABLE IF NOT EXISTS streams (
     video_id        TEXT PRIMARY KEY,
     title           TEXT NOT NULL DEFAULT '',
     published_at    TEXT,
+    stream_started_at TEXT,
     live_chat_id    TEXT NOT NULL DEFAULT '',
     duration_sec    INTEGER NOT NULL DEFAULT 0,
     chat_count      INTEGER NOT NULL DEFAULT 0,
@@ -90,6 +91,11 @@ def get_conn() -> sqlite3.Connection:
 def init_db():
     conn = get_conn()
     conn.executescript(SCHEMA_SQL)
+    # Migration: add stream_started_at column for existing DBs
+    try:
+        conn.execute("ALTER TABLE streams ADD COLUMN stream_started_at TEXT")
+    except sqlite3.OperationalError:
+        pass  # column already exists
     conn.commit()
     conn.close()
 
@@ -171,15 +177,18 @@ def _row_to_viewer(r) -> Viewer:
 def upsert_stream(s: Stream):
     conn = get_conn()
     conn.execute("""
-        INSERT INTO streams (video_id, title, published_at, live_chat_id, duration_sec,
+        INSERT INTO streams (video_id, title, published_at, stream_started_at, live_chat_id, duration_sec,
                              chat_count, unique_viewers, is_member_only, collection_status)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending')
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
         ON CONFLICT(video_id) DO UPDATE SET
             title = COALESCE(NULLIF(EXCLUDED.title, ''), streams.title),
             published_at = COALESCE(NULLIF(EXCLUDED.published_at, ''), streams.published_at),
+            stream_started_at = COALESCE(EXCLUDED.stream_started_at, streams.stream_started_at),
             duration_sec = EXCLUDED.duration_sec,
             is_member_only = EXCLUDED.is_member_only
-    """, (s.video_id, s.title, s.published_at.isoformat() if s.published_at else None,
+    """, (s.video_id, s.title,
+          s.published_at.isoformat() if s.published_at else None,
+          s.stream_started_at.isoformat() if s.stream_started_at else None,
           s.live_chat_id, s.duration_sec, s.chat_count, s.unique_viewers, int(s.is_member_only)))
     conn.commit()
     conn.close()
@@ -236,6 +245,7 @@ def _row_to_stream(r) -> Stream:
         video_id=r["video_id"],
         title=r["title"],
         published_at=_parse_dt(r["published_at"]),
+        stream_started_at=_parse_dt(r["stream_started_at"]),
         live_chat_id=r["live_chat_id"],
         duration_sec=r["duration_sec"],
         chat_count=r["chat_count"],
@@ -284,8 +294,8 @@ def get_comments_by_viewer(viewer_id: str, limit: int = 500) -> list[tuple[Comme
     conn = get_conn()
     rows = conn.execute("""
         SELECT c.*, s.video_id,
-               CAST(COALESCE(strftime('%%s', c.published_at), '0') AS INTEGER)
-               - CAST(COALESCE(strftime('%%s', s.published_at), '0') AS INTEGER) as time_offset
+               CAST(COALESCE(strftime('%s', c.published_at), '0') AS INTEGER)
+               - CAST(COALESCE(strftime('%s', COALESCE(s.stream_started_at, s.published_at)), '0') AS INTEGER) as time_offset
         FROM comments c
         JOIN streams s ON c.stream_id = s.video_id
         WHERE c.viewer_id = ?
@@ -309,8 +319,8 @@ def search_comments(query: str, limit: int = 200) -> list[tuple[Comment, str, in
     conn = get_conn()
     rows = conn.execute("""
         SELECT c.*, s.video_id,
-               CAST(COALESCE(strftime('%%s', c.published_at), '0') AS INTEGER)
-               - CAST(COALESCE(strftime('%%s', s.published_at), '0') AS INTEGER) as time_offset
+               CAST(COALESCE(strftime('%s', c.published_at), '0') AS INTEGER)
+               - CAST(COALESCE(strftime('%s', COALESCE(s.stream_started_at, s.published_at)), '0') AS INTEGER) as time_offset
         FROM comments c
         JOIN streams s ON c.stream_id = s.video_id
         WHERE c.message_text LIKE ?
