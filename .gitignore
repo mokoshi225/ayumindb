@@ -13,6 +13,9 @@ data/chats/*.json
 data/chats/*.part
 data/chats/*.part-*
 
+# ログ
+*.log
+
 # Python キャッシュ
 __pycache__/
 *.pyc
