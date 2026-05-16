@@ -1,0 +1,110 @@
+{
+  "responseContext": {
+    "serviceTrackingParams": [
+      {
+        "service": "CSI",
+        "params": [
+          {
+            "key": "c",
+            "value": "WEB"
+          },
+          {
+            "key": "cver",
+            "value": "2.20260515.01.00"
+          },
+          {
+            "key": "yt_li",
+            "value": "0"
+          },
+          {
+            "key": "GetLiveChat_rid",
+            "value": "0x4b18be4517eff5b9"
+          }
+        ]
+      },
+      {
+        "service": "GFEEDBACK",
+        "params": [
+          {
+            "key": "logged_in",
+            "value": "0"
+          },
+          {
+            "key": "visitor_data",
+            "value": "CgtIWGFkaHpFVjhrdyihjaDQBjIKCgJKUBIEGgAga2LfAgrcAjE4LllUPU8xYWUtbVpNRUVQSTFPc21jUkw4cFpxeFlKQkFhcGxCZl9yLWpOaE5EcHQzM2tzUTVXSzVFeGtfcFpFcFp3czVYNGxrSzNTMkpHZlJqUGFpSmJ4UWNNM2IxNktDN2dvWWVlRDBCbGR0V2J1c2pKdUQ2bjlpeWZ4QlVsME92V3NXN0V2dWNsSjljS0RmY0M2bTJnTnR6WnNHcFVILV82NnQwSlY3MmMzOHMxUXh5U2czczlTdGZkMjJqT1h5QV9nVm0waHVtYmVXdTJqTGtreENXRnduYkh5SXJMQWFaQXhlNXNlalA0akJGM1hrTlVxcmNrQTN1TzdlSlYwN256X1dvZ2xST2RVT21PTGk5ZXRmOWF5TzVWNHBzZXVBZHRoNjZHV3Y1ZVdWV2JqM1VGaU1RYXF2M2lWTUxsbUpkc190MXNrTWQ3M1dGaGhfUnJGYlB1NjNPZw%3D%3D"
+          }
+        ]
+      },
+      {
+        "service": "GUIDED_HELP",
+        "params": [
+          {
+            "key": "logged_in",
+            "value": "0"
+          }
+        ]
+      },
+      {
+        "service": "ECATCHER",
+        "params": [
+          {
+            "key": "client.version",
+            "value": "2.20260515"
+          },
+          {
+            "key": "client.name",
+            "value": "WEB"
+          }
+        ]
+      }
+    ],
+    "mainAppWebResponseContext": {
+      "loggedOut": true,
+      "trackingParam": "kV9fmPxhojXCz39TnrslLKPQSQR"
+    },
+    "responseId": "IhMIobX754-9lAMVFGEPAh2NrwzV",
+    "webResponseContextExtensionData": {
+      "webResponseContextPreloadData": {
+        "preloadMessageNames": [
+          "liveChatContinuation"
+        ]
+      },
+      "hasDecorated": true
+    }
+  },
+  "continuationContents": {
+    "liveChatContinuation": {
+      "continuations": [
+        {
+          "timedContinuationData": {
+            "timeoutMs": 15119,
+            "continuation": "0ofMyAONAhpeQ2lrcUp3b1lWVU5uUmxKT1FWSktiM2R4U0c1Sk4weE9hMWh1WkVKUkVnczVXbWg0ZG5ZdE1rUXhheG9UNnFqZHVRRU5DZ3M1V21oNGRuWXRNa1F4YXlBQk1BQSUzRCir692yp7uUAzAAQAFKbQgAGAAgAEoKCAEQABgAIAAwAFCpzOq5j72UA1gDeACiAQCqAQwQABoAIgAqBAgAEACwAQDAAQDIAanM6rmPvZQD4gEMCKKNoNAGEJz7pKMB6AEA-AEAiAIAkAIAmgILCIOOoNAGEOCzwiqIAwBQ-bCbs6e7lANY07Cbs6e7lAOCAQQIBBgBiAEAoAGM2fvnj72UA7IBALoBAggP0AEA"
+          }
+        }
+      ]
+    }
+  },
+  "frameworkUpdates": {
+    "entityBatchUpdate": {
+      "mutations": [
+        {
+          "entityKey": "Egs5Wmh4dnYtMkQxayCzBCgB",
+          "type": "ENTITY_MUTATION_TYPE_REPLACE",
+          "payload": {
+            "liveViewerLeaderboardChatEntryPointStateEntity": {
+              "key": "Egs5Wmh4dnYtMkQxayCzBCgB",
+              "state": "LIVE_VIEWER_LEADERBOARD_CHAT_ENTRY_POINT_STATE_POINTS_AVAILABLE"
+            }
+          }
+        }
+      ],
+      "timestamp": {
+        "seconds": "1778910979",
+        "nanos": 92075932
+      }
+    }
+  },
+  "liveChatStreamingResponseExtension": {
+    "lastPublishAtUsec": "1778848591685929"
+  }
+}

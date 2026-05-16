@@ -2,6 +2,13 @@
 
 あゆみんch 視聴者データベースのアーキテクチャ概要。
 
+## セッションを跨ぐ永続指示
+
+1. **作業開始前に `failures.md` を読むこと。** 過去の失敗と解決策が記録されている。同じ失敗を繰り返してはならない。
+2. **新しい失敗に遭遇したら `failures.md` に追記すること。** 症状・原因・解決策・教訓を必ず書く。成功したらその直後に記録する。
+3. **`AGENTS.md` 自体も必要に応じて更新すること。** アーキテクチャの変更、新しいスクリプトの追加、設定値の変更はここに反映する。
+4. **バージョンは `ayumindb/__init__.py` の VERSION を更新すること。** コード修正のたびにインクリメントする。
+
 ## 全体構成
 
 ```
@@ -16,8 +23,8 @@ ayumindb/
 │   ├── export_cookies.py   # Firefox クッキー → cookies.txt
 │   ├── export_html.py      # DB → 静的 HTML レポート
 │   ├── backfill.py         # 全配信バックフィル
+│   ├── live_monitor.py     # リアルタイムライブ監視
 │   └── start_dashboard.bat # Windows 起動用
-│   │   ├── live_monitor.py     # リアルタイムライブ監視
 ├── data/
 │   ├── ayumindb.db   # SQLite
 │   ├── cookies.txt    # Firefox エクスポート（git管理外）
