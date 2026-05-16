@@ -139,15 +139,15 @@ def show_viewer_detail(channel_id: str):
             st.markdown(f"- {ev.occurred_at.strftime('%Y-%m-%d')}: **{ev.event_type}** (加入{ev.member_month}ヶ月)")
 
     st.subheader("💬 コメント履歴")
-    comments = get_comments_by_viewer(channel_id, limit=200)
+    comments = get_comments_by_viewer(channel_id, limit=500)
     if comments:
-        for c in comments[:50]:
-            emoji = "🔴" if c.is_member else ""
-            st.markdown(f"> {emoji} **{c.published_at.strftime('%Y-%m-%d %H:%M')}**")
-            st.markdown(f"> {c.message_text[:200]}")
-            if c.super_chat_amount_text:
-                st.markdown(f"> 💰 {c.super_chat_amount_text}")
-            st.divider()
+        rows = []
+        for c in comments[:200]:
+            mem = "🔴" if c.is_member else "  "
+            dt = c.published_at.strftime("%Y-%m-%d %H:%M")
+            sc = f" 💰{c.super_chat_amount_text}" if c.super_chat_amount_text else ""
+            rows.append(f"`{mem}` {dt}: {c.message_text[:150]}{sc}")
+        st.markdown("\n".join(rows), unsafe_allow_html=True)
     else:
         st.caption("コメント履歴なし")
 
