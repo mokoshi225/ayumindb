@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime
+import time
 
 import sys
 from pathlib import Path
@@ -14,6 +15,20 @@ from ayumindb.db import (
 )
 
 st.set_page_config(page_title="AyumiDB", layout="wide", page_icon="📊")
+
+# ---- Cached data fetchers (B-1: avoid re-query on every interaction) ----
+
+@st.cache_data(ttl=60)
+def _cached_viewers():
+    return get_all_viewers()
+
+@st.cache_data(ttl=60)
+def _cached_rankings(rank_type: str, limit: int):
+    return get_rankings(rank_type, limit)
+
+@st.cache_data(ttl=60)
+def _cached_stats():
+    return get_stats()
 
 
 def yt_link(video_id: str, t: int = 0) -> str:
@@ -68,7 +83,7 @@ def show_search_results(query: str):
 
 
 def show_dashboard():
-    stats = get_stats()
+    stats = _cached_stats()
     col1, col2, col3, col4, col5 = st.columns(5)
     col1.metric("総視聴者数", stats.get("viewer_count", 0))
     col2.metric("メンバー数", stats.get("member_count", 0))
@@ -80,7 +95,7 @@ def show_dashboard():
     rank_col1, rank_col2 = st.columns(2)
     with rank_col1:
         st.caption("古参 TOP5")
-        oldest = get_rankings("oldest", 5)
+        oldest = _cached_rankings("oldest", 5)
         if oldest:
             df = pd.DataFrame(oldest)
             df["first_seen_at"] = pd.to_datetime(df["first_seen_at"]).dt.strftime("%Y-%m-%d")
@@ -89,7 +104,7 @@ def show_dashboard():
             ), hide_index=True, use_container_width=True)
     with rank_col2:
         st.caption("スパチャ TOP5")
-        sc = get_rankings("superchat", 5)
+        sc = _cached_rankings("superchat", 5)
         if sc:
             df = pd.DataFrame(sc)
             st.dataframe(df[["display_name", "superchat_total", "comment_count"]].rename(
@@ -99,7 +114,7 @@ def show_dashboard():
 
 def show_viewers():
     st.subheader("👤 視聴者一覧")
-    viewers = get_all_viewers()
+    viewers = _cached_viewers()
     if not viewers:
         st.info("まだデータがありません。「配信一覧」からチャットを収集してください。")
         return
@@ -125,15 +140,28 @@ def show_viewers():
     else:
         filtered.sort(key=lambda v: v.display_name)
 
-    # 視聴者名ボタンで詳細表示
-    cols = st.columns(6)
-    pages = [filtered[i:i+len(cols)] for i in range(0, len(filtered), len(cols))]
-    for page in pages:
-        cols = st.columns(len(page))
-        for ci, v in enumerate(page):
-            with cols[ci]:
-                if st.button(v.display_name, key=f"v_{v.channel_id}", use_container_width=True):
+    # Build DataFrame (B-2: st.dataframe instead of 6074 st.button() calls)
+    df_data = []
+    for v in filtered:
+        df_data.append({
+            "名前": v.display_name,
+            "初コメント": v.first_seen_at.strftime("%Y-%m-%d") if v.first_seen_at else "?",
+            "メンバー": "✅" if v.is_member else "",
+            "コメント数": v.comment_count,
+            "スパチャ額": f"¥{v.superchat_total:,}" if v.superchat_total > 0 else "",
+        })
+    df = pd.DataFrame(df_data)
+    st.dataframe(df, hide_index=True, use_container_width=True)
+
+    # Viewer detail: selectbox instead of 6000 buttons
+    names = [v.display_name for v in filtered]
+    if names:
+        selected = st.selectbox("👤 詳細を見る視聴者を選択", [""] + names, key="viewer_selector")
+        if selected:
+            for v in filtered:
+                if v.display_name == selected:
                     st.session_state["detail_channel_id"] = v.channel_id
+                    break
 
     if "detail_channel_id" in st.session_state:
         show_viewer_detail(st.session_state["detail_channel_id"])
@@ -187,7 +215,7 @@ def show_rankings():
     limit = st.slider("表示件数", 10, 100, 50)
 
     type_map = {"古参": "oldest", "コメント数": "comments", "スパチャ": "superchat"}
-    rows = get_rankings(type_map[rank_type], limit)
+    rows = _cached_rankings(type_map[rank_type], limit)
 
     if not rows:
         st.info("データがまだありません。")
