@@ -10,6 +10,8 @@ data/cookies.txt
 
 # チャットJSON（再取得可能）
 data/chats/*.json
+data/chats/*.part
+data/chats/*.part-*
 
 # Python キャッシュ
 __pycache__/
