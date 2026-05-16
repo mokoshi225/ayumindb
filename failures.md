@@ -148,3 +148,101 @@ CAST(REPLACE(REPLACE(super_chat_amount_text, '¥', ''), ',', '') AS INTEGER)
 - 配信メタデータは `--dump-json` で個別に取得する必要がある
 - 一度DBに入れたデータの修正は後から大変なので、最初から正しく保存する
 - 既存レコードのバッチ修正用ワンオフスクリプトも用意しておく
+
+---
+
+## 2026-05-16: backfill.py の datetime 未インポート + 型の不一致
+
+### 症状
+tmux で backfill を起動した直後に `NameError: name 'datetime' is not defined` で落ちた。
+修正後、次の行で `AttributeError: 'str' object has no attribute 'isoformat'`。
+
+### 原因
+1. `backfill()` 関数内で `datetime.strptime()` を使っているのに `from datetime import datetime` がモジュールレベルに無かった（`_extract_stream_date()` 内にしかなかった）
+2. `datetime.strptime().isoformat()` と文字列に変換してから `Stream.published_at` に代入していたが、`db.py` の `upsert_stream()` は `.isoformat()` を呼ぶため datetime オブジェクトを期待していた
+
+### 解決策
+1. `from datetime import datetime` をモジュールレベルのインポートに追加
+2. `datetime.strptime(pub, "%Y%m%d").isoformat()` → `datetime.strptime(pub, "%Y%m%d")` に変更（datetime オブジェクトのまま渡す）
+
+### 教訓
+- ヘルパー関数内だけで使っているモジュールを、メイン関数でも使う場合はモジュールレベルに移動する
+- データクラスのフィールドに代入する値の型は、そのクラスが何を期待しているかを確認する
+- 型ヒントを信頼する（`published_at: Optional[datetime]` なら datetime か None を渡す）
+
+---
+
+## 2026-05-16: time_offset の基準時刻が配信開始時刻ではなく真夜中だった
+
+### 症状
+コメント履歴の ▶ リンクをクリックすると動画の先頭（`?t=0`）にしか飛ばない。
+または `?t=40000` など巨大な値で全然違う位置に飛ぶ。
+
+### 原因
+`time_offset` の計算が `comment_published_at - stream_published_at` だったが、
+`stream_published_at` は yt-dlp の `upload_date`（YYYYMMDD、真夜中）を保存していた。
+配信は通常 21-23時 JST に始まるため、基準が約21時間ズレていた。
+加えて、一部のストリームは published_at が未設定（NULL）のため offset=0 になっていた。
+
+### 解決策
+1. `streams` テーブルに `stream_started_at` カラムを新設
+2. 最初のコメントの `timestampUsec` を配信開始時刻として保存するよう変更
+   （backfill.py + live_monitor.py の両方）
+3. `time_offset` の計算基準を `COALESCE(s.stream_started_at, s.published_at)` に変更
+4. 既存85ストリームの `stream_started_at` をマイグレーションでバックフィル
+5. `init_db()` に ALTER TABLE マイグレーションを追加して既存DBと互換性を維持
+
+### 教訓
+- 配信の「日付」と「実際の開始時刻」は別物。`upload_date` は日付のみで時刻情報がない
+- ライブ配信の開始時刻を知るには、最初のチャットメッセージのタイムスタンプを使うのが確実
+- スキーマ変更が必要な場合は `init_db()` に ALTER TABLE + try/except パターンで対応する
+- テーブル定義だけでなく、データクラス（models.py）と Row→オブジェクト変換（`_row_to_stream`）も同時に更新する
+
+---
+
+## 2026-05-16: Streamlit が全視聴者を毎回再クエリ + 6000個のボタンを再描画
+
+### 症状
+ランキング切り替え・並び替え・フィルター変更時にブラウザが約5秒フリーズする。
+
+### 原因
+Streamlit はユーザー操作のたびにスクリプト全体を再実行する。
+そのたびに以下が走っていた:
+1. `get_all_viewers()`: 6074行の視聴者データを相関サブクエリ付きでSQL再実行（**1163ms**）
+2. `show_viewers()`: 6074個の `st.button()` を生成してグリッド表示（ウィジェット数過多）
+
+### 解決策
+1. **`@st.cache_data(ttl=60)` 導入**: データフェッチ関数にキャッシュを追加。60秒間は再クエリしない
+   - `_cached_viewers()`, `_cached_rankings()`, `_cached_stats()` の3関数
+2. **`st.dataframe` に置き換え**: 6074個の `st.button()` を1個の `st.dataframe` + 視聴者選択用 `st.selectbox` に変更
+   - フィルター・ソートは Python 上でキャッシュ済みデータに対して行う（ミリ秒）
+
+### 教訓
+- Streamlit は stateless なスクリプト再実行モデル。高コストな処理は `@st.cache_data` で明示的にキャッシュする
+- 大量のウィジェット（数千のボタン）はフレームレートを著しく低下させる
+- 一覧表示は `st.dataframe`、選択操作は `st.selectbox` が適切
+- フィルター・ソートはSQLでやるよりPythonでやったほうがキャッシュ効率が良い
+
+---
+
+## 2026-05-16: SQLite strftime の %s が %%s と書かれていて常に0を返していた
+
+### 症状
+コメントのタイムリンク（▶）が常に動画の最初にしか飛ばない。
+`time_offset` が常に0。
+
+### 原因
+`db.py` の `strftime` 呼び出しで、フォーマット文字列が `'%%s'` と書かれていた。
+Python では文字列中の `%%` は特別なエスケープではない（`%` フォーマットや f-string でのみ有効）。
+そのため SQLite には `strftime('%%s', ...)` がそのまま渡された。
+SQLite の `strftime` では `%%` は「リテラルの %」を意味するため、`%%s` → 文字列 `%s` を返す。
+`CAST('%s' AS INTEGER)` = 0 となり、offset は常に0になっていた。
+
+### 解決策
+`strftime('%%s', ...)` → `strftime('%s', ...)` に修正（4箇所）。
+
+### 教訓
+- Python の `%%` エスケープは `%` 演算子と f-string でのみ機能する。通常の文字列リテラルでは `%%` はそのまま `%%`
+- SQLite の strftime に渡すフォーマットはシングルクォート内の `%s`（パーセント1つ）で正しい
+- バグが最初から存在していたが、「リンクが動画先頭に飛ぶ」という挙動が自然に見えていたため長期間気づかれなかった
+- 原因を特定するには、get_conn() 経由と raw sqlite3 接続の結果を比較するのが有効
