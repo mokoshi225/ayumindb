@@ -15,6 +15,7 @@ from ayumindb.db import (
     Stream as DBStream,
 )
 from typing import Optional
+from datetime import datetime
 
 
 def _extract_stream_date(filepath: Path) -> Optional[str]:
@@ -59,6 +60,15 @@ def import_chat_to_db(filepath: Path, use_cookies: bool):
             conn.execute("UPDATE streams SET published_at = ? WHERE video_id = ?", (pub, video_id))
             conn.commit()
             conn.close()
+
+    # 配信の実際の開始時刻を最初のコメントから設定（time_offset の基準）
+    if result["comments"]:
+        first_ts = result["comments"][0].published_at
+        conn = get_conn()
+        conn.execute("UPDATE streams SET stream_started_at = ? WHERE video_id = ?",
+                     (first_ts.isoformat(), video_id))
+        conn.commit()
+        conn.close()
 
     for v in result["viewers"].values():
         upsert_viewer(v)
@@ -109,7 +119,7 @@ def backfill(batch_size: int = 20, delay: float = 5.0):
         info = get_video_info(video_id, use_cookies=use_cookies)
         pub = info.get("upload_date")
         if pub:
-            pub_dt = datetime.strptime(pub, "%Y%m%d").isoformat()
+            pub_dt = datetime.strptime(pub, "%Y%m%d")
         else:
             pub_dt = None
 
