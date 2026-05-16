@@ -1,0 +1,25 @@
+# 個人情報 / 認証
+data/cookies.txt
+*.cookies.txt
+
+# データベース（再生成可能）
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# チャットJSON（再取得可能）
+data/chats/*.json
+
+# Python キャッシュ
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+
+# Streamlit 設定
+.streamlit/
+
+# OS
+.DS_Store
+Thumbs.db

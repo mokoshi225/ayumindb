@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AyumiDB — あゆみんch 視聴者データベース</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: 'Segoe UI', -apple-system, sans-serif;
+    background: #0f0f0f;
+    color: #e0e0e0;
+    line-height: 1.7;
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 40px 24px;
+  }
+  h1 { font-size: 2.4em; margin-bottom: 8px; }
+  h1 span { color: #ff4444; }
+  .subtitle { color: #888; font-size: 1.1em; margin-bottom: 32px; }
+  h2 {
+    color: #fff;
+    font-size: 1.5em;
+    margin: 40px 0 16px;
+    border-bottom: 2px solid #222;
+    padding-bottom: 8px;
+  }
+  h3 { color: #ccc; margin: 24px 0 8px; }
+  p, li { color: #bbb; margin-bottom: 8px; }
+  a { color: #ff6666; text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code {
+    background: #1a1a1a;
+    color: #ff9999;
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-size: 0.9em;
+  }
+  pre {
+    background: #1a1a1a;
+    padding: 16px;
+    border-radius: 8px;
+    overflow-x: auto;
+    margin: 12px 0;
+    font-size: 0.85em;
+    line-height: 1.5;
+  }
+  ul, ol { padding-left: 24px; }
+  li { margin-bottom: 4px; }
+  .badge {
+    display: inline-block;
+    background: #222;
+    color: #888;
+    padding: 2px 10px;
+    border-radius: 12px;
+    font-size: 0.8em;
+    margin-right: 4px;
+  }
+  .badge.python { background: #3572A5; color: #fff; }
+  .badge.sqlite { background: #003B57; color: #fff; }
+  .badge.streamlit { background: #FF4B4B; color: #fff; }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 12px 0;
+  }
+  th, td {
+    text-align: left;
+    padding: 8px 12px;
+    border-bottom: 1px solid #222;
+  }
+  th { color: #888; font-weight: 600; }
+  .footer {
+    text-align: center;
+    color: #555;
+    font-size: 0.85em;
+    margin-top: 60px;
+    padding-top: 20px;
+    border-top: 1px solid #222;
+  }
+  @media (prefers-color-scheme: light) {
+    body { background: #fff; color: #444; }
+    h1 span { color: #d00; }
+    h2 { color: #000; border-bottom-color: #ddd; }
+    h3 { color: #333; }
+    p, li { color: #555; }
+    a { color: #d00; }
+    code { background: #f5f5f5; color: #c00; }
+    pre { background: #f5f5f5; }
+    th { color: #666; }
+    td { border-bottom-color: #eee; }
+    .footer { color: #aaa; border-top-color: #ddd; }
+  }
+</style>
+</head>
+<body>
+
+<h1><span>Ayumi</span>DB</h1>
+<p class="subtitle">あゆみんch (ch-uh6rs) の視聴者データベース — コメント履歴・メンバーシップ・ランキング</p>
+
+<p>
+  <span class="badge python">Python</span>
+  <span class="badge sqlite">SQLite</span>
+  <span class="badge streamlit">Streamlit</span>
+</p>
+
+<h2>概要</h2>
+<p>
+  あゆみんch の YouTube ライブ配信のチャットを自動収集し、視聴者ごとのコメント履歴、
+  メンバーシップ加入状況、各種ランキング（古参・コメント数・スパチャ）を表示する
+  データベース &amp; ダッシュボードです。
+</p>
+
+<h2>機能</h2>
+<ul>
+  <li><strong>📡 チャット自動収集</strong> — yt-dlp で過去配信のチャットリプレイを取得</li>
+  <li><strong>👤 視聴者トラッキング</strong> — 初コメント日、コメント数、メンバーシップ状態</li>
+  <li><strong>🔴 メン限対応</strong> — Firefox クッキーで認証、メンバー限定配信もカバー</li>
+  <li><strong>🏆 ランキング</strong> — 古参順、コメント数順、スパチャ額順</li>
+  <li><strong>📱 2つの表示方法</strong> — インタラクティブな Streamlit サーバー + 静的 HTML レポート</li>
+</ul>
+
+<h2>アーキテクチャ</h2>
+<pre>
+  yt-dlp (live_chat JSON)
+         │
+         ▼
+   parser.py ──→ 視聴者 / コメント / メンバーシップイベント を抽出
+         │
+         ▼
+   db.py ──→ SQLite に保存
+         │
+         ├── app.py ──→ Streamlit ダッシュボード（localhost:8501）
+         └── export_html.py ──→ 静的 HTML レポート
+</pre>
+
+<h2>セットアップ</h2>
+
+<h3>前提</h3>
+<ul>
+  <li>WSL2 (Ubuntu) + Python 3.11+</li>
+  <li>Windows Firefox（メン限配信取得に必要。通常配信のみなら不要）</li>
+</ul>
+
+<h3>インストール</h3>
+<pre>
+git clone https://github.com/mokoshi225/ayumindb.git
+cd ayumindb
+pip install -e .
+</pre>
+
+<h3>クッキーの準備（メン限配信を取得する場合のみ）</h3>
+<ol>
+  <li>Windows Firefox で YouTube にログイン（メンバーシップ加入済みアカウント）</li>
+  <li>Firefox を閉じる（クッキーDBのロック解除）</li>
+  <li>WSL2 で以下を実行:
+    <pre>python3 scripts/export_cookies.py</pre>
+  </li>
+</ol>
+
+<h3>データ収集（バックフィル）</h3>
+<pre>
+# 全配信を収集（最初は50件だけテスト推奨）
+python3 scripts/backfill.py --batch 20 --delay 5
+
+# オプション:
+#   --batch 20   20件ごとに長めの休憩
+#   --delay 5    リクエスト間隔（秒）
+</pre>
+
+<h3>ダッシュボード起動</h3>
+<pre>
+# 方法A: Streamlit（インタラクティブ）
+streamlit run ayumindb/app.py --server.headless true
+# → http://localhost:8501 をブラウザで開く
+
+# 方法B: 静的 HTML（オフライン閲覧用）
+python3 scripts/export_html.py
+# → data/dashboard.html を開く
+</pre>
+
+<h2>プロジェクト構成</h2>
+<pre>
+ayumindb/
+├── ayumindb/               # コアモジュール
+│   ├── models.py           # データクラス
+│   ├── db.py               # SQLite CRUD
+│   ├── parser.py           # チャットJSONパーサー
+│   ├── collector.py        # yt-dlp ラッパー
+│   └── app.py              # Streamlit ダッシュボード
+├── scripts/
+│   ├── export_cookies.py   # クッキーエクスポート
+│   ├── export_html.py      # HTMLレポート生成
+│   ├── backfill.py         # 一括収集
+│   └── start_dashboard.bat # Windows起動用
+├── data/                   # データ保存（git管理外）
+├── AGENTS.md               # AIエージェント用ドキュメント
+└── README.html
+</pre>
+
+<h2>スキーマ</h2>
+<table>
+  <tr><th>テーブル</th><th>主キー</th><th>用途</th></tr>
+  <tr><td>viewers</td><td>channel_id</td><td>視聴者マスタ</td></tr>
+  <tr><td>streams</td><td>video_id</td><td>配信メタデータ</td></tr>
+  <tr><td>comments</td><td>(auto)</td><td>コメント全文</td></tr>
+  <tr><td>membership_events</td><td>(auto)</td><td>メンバーシップ履歴</td></tr>
+  <tr><td>collection_log</td><td>(auto)</td><td>収集状態</td></tr>
+</table>
+
+<h2>レート制限</h2>
+<ul>
+  <li>リクエスト間隔: デフォルト 5秒（--delay で調整可）</li>
+  <li>バッチ休憩: 20件ごとに長めの待機</li>
+  <li>安全圏: 1日200件まで</li>
+  <li>yt-dlp の --sleep-requests 3 で内部でも待機</li>
+</ul>
+
+<div class="footer">
+  AyumiDB is an open-source project.<br>
+  Not affiliated with YouTube or あゆみんch.
+</div>
+
+</body>
+</html>
