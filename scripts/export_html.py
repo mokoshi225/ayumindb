@@ -136,15 +136,17 @@ def build_html():
     # --- 配信一覧 ---
     html += '<div id="tab-streams" class="tab-content">\n<h2>📹 配信一覧</h2>\n'
     html += '<input type="text" id="filter-streams" placeholder="タイトルで検索..." oninput="filterTable(\'streams\')">\n'
-    html += '<table id="table-streams"><thead><tr><th onclick="sortTable(\'streams\',0)">タイトル</th><th onclick="sortTable(\'streams\',1)">日時</th><th onclick="sortTable(\'streams\',2)">時間</th><th onclick="sortTable(\'streams\',3)">コメント数</th><th onclick="sortTable(\'streams\',4)">視聴者数</th><th>メン限</th></tr></thead><tbody>\n'
+    html += '<input type="text" id="filter-streams" placeholder="タイトルで検索..." oninput="filterTable(\'streams\')">\n'
+    html += '<table id="table-streams"><thead><tr><th onclick="sortTable(\'streams\',0)">タイトル</th><th onclick="sortTable(\'streams\',1)">日時</th><th onclick="sortTable(\'streams\',2)">時間</th><th onclick="sortTable(\'streams\',3)">コメント数</th><th onclick="sortTable(\'streams\',4)">視聴者数</th><th>リンク</th><th>メン限</th></tr></thead><tbody>\n'
     for s in streams:
         title = s.title[:60]
         date = s.published_at.strftime('%Y-%m-%d') if s.published_at else '?'
         dur = f'{s.duration_sec // 3600}h{(s.duration_sec % 3600) // 60:02d}m' if s.duration_sec else '?'
         cc = s.chat_count
         uv = s.unique_viewers
+        link = f'<a href="https://youtu.be/{s.video_id}" target="_blank">▶</a>'
         mem = '🔒' if s.is_member_only else ''
-        html += f'<tr><td>{title}</td><td>{date}</td><td>{dur}</td><td>{cc}</td><td>{uv}</td><td>{mem}</td></tr>\n'
+        html += f'<tr><td>{title}</td><td>{date}</td><td>{dur}</td><td>{cc}</td><td>{uv}</td><td>{link}</td><td>{mem}</td></tr>\n'
     html += '</tbody></table></div>\n'
 
     # JavaScript

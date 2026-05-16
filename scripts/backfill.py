@@ -7,26 +7,58 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from ayumindb import VERSION
-from ayumindb.collector import get_channel_streams, download_chat, COOKIE_FILE
+from ayumindb.collector import get_channel_streams, download_chat, get_video_info, COOKIE_FILE
 from ayumindb.parser import parse_chat_file
 from ayumindb.db import (
-    init_db, upsert_stream, upsert_viewer, insert_comments_batch,
+    init_db, get_conn, upsert_stream, upsert_viewer, insert_comments_batch,
     insert_membership_event, update_stream_collection_status, get_stream,
     Stream as DBStream,
 )
+from typing import Optional
+
+
+def _extract_stream_date(filepath: Path) -> Optional[str]:
+    """Chat JSONの最初のメッセージから配信日時を推定"""
+    import json
+    try:
+        with open(filepath) as f:
+            first_line = f.readline().strip()
+            if first_line:
+                msg = json.loads(first_line)
+                actions = msg.get("replayChatItemAction", {}).get("actions", [])
+                for a in actions:
+                    item = a.get("addChatItemAction", {}).get("item", {})
+                    for rkey in ("liveChatTextMessageRenderer", "liveChatViewerEngagementMessageRenderer"):
+                        r = item.get(rkey, {})
+                        ts = r.get("timestampUsec")
+                        if ts:
+                            return datetime.fromtimestamp(int(ts) / 1_000_000).isoformat()
+    except Exception:
+        pass
+    return None
 
 
 def import_chat_to_db(filepath: Path, use_cookies: bool):
     result = parse_chat_file(filepath)
+    video_id = result["stream_id"]
 
-    s = get_stream(result["stream_id"])
+    s = get_stream(video_id)
     if s:
         s.chat_count = len(result["comments"])
         s.unique_viewers = len(result["viewers"])
         update_stream_collection_status(
-            result["stream_id"], "completed",
+            video_id, "completed",
             len(result["comments"]), len(result["viewers"]),
         )
+
+    # 配信日時を補完
+    if s and not s.published_at:
+        pub = _extract_stream_date(filepath)
+        if pub:
+            conn = get_conn()
+            conn.execute("UPDATE streams SET published_at = ? WHERE video_id = ?", (pub, video_id))
+            conn.commit()
+            conn.close()
 
     for v in result["viewers"].values():
         upsert_viewer(v)
@@ -73,9 +105,18 @@ def backfill(batch_size: int = 20, delay: float = 5.0):
         is_member_only = "メン限" in title or "メンバーシップ" in title
         use_cookies = is_member_only and cookie_available
 
+        # 配信メタデータを取得（publish日時）
+        info = get_video_info(video_id, use_cookies=use_cookies)
+        pub = info.get("upload_date")
+        if pub:
+            pub_dt = datetime.strptime(pub, "%Y%m%d").isoformat()
+        else:
+            pub_dt = None
+
         s = DBStream(
             video_id=video_id,
             title=title,
+            published_at=pub_dt,
             duration_sec=duration,
             is_member_only=is_member_only,
         )

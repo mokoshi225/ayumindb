@@ -10,15 +10,33 @@ from ayumindb import VERSION, GITHUB_URL
 from ayumindb.db import (
     init_db, get_all_viewers, get_viewer, get_all_streams, get_stream,
     get_comments_by_viewer, get_comments_by_stream, get_membership_events_by_viewer,
-    get_stats, get_rankings,
+    search_comments, get_stats, get_rankings,
 )
 
 st.set_page_config(page_title="AyumiDB", layout="wide", page_icon="📊")
 
 
+def yt_link(video_id: str, t: int = 0) -> str:
+    if t > 0:
+        return f"https://youtu.be/{video_id}?t={t}"
+    return f"https://youtu.be/{video_id}"
+
+
+def yt_markdown(video_id: str, label: str = "", t: int = 0) -> str:
+    url = yt_link(video_id, t)
+    text = label or video_id
+    return f'<a href="{url}" target="_blank">{text}</a>'
+
+
 def main():
     init_db()
     st.title("📊 あゆみんch 視聴者データベース")
+
+    # 検索を最上部に
+    search_query = st.text_input("🔍 コメント全文検索", placeholder="コメント内容を入力...")
+    if search_query:
+        show_search_results(search_query)
+        st.divider()
 
     tab1, tab2, tab3, tab4 = st.tabs(["ダッシュボード", "視聴者一覧", "ランキング", "配信一覧"])
 
@@ -30,6 +48,23 @@ def main():
         show_rankings()
     with tab4:
         show_streams()
+
+
+def show_search_results(query: str):
+    results = search_comments(query, limit=100)
+    if not results:
+        st.caption(f"「{query}」に一致するコメントなし")
+        return
+    st.markdown(f"**「{query}」** の検索結果: {len(results)}件")
+    lines = []
+    for comment, video_id, offset in results:
+        mem = "🔴" if comment.is_member else "  "
+        dt = comment.published_at.strftime("%Y-%m-%d %H:%M")
+        link = yt_markdown(video_id, "▶", max(0, offset))
+        text = comment.message_text[:100]
+        sc = f" 💰{comment.super_chat_amount_text}" if comment.super_chat_amount_text else ""
+        lines.append(f"`{mem}` {dt} {link}: {text}{sc}")
+    st.markdown("\n".join(lines), unsafe_allow_html=True)
 
 
 def show_dashboard():
@@ -64,20 +99,10 @@ def show_dashboard():
 
 def show_viewers():
     st.subheader("👤 視聴者一覧")
-
     viewers = get_all_viewers()
     if not viewers:
         st.info("まだデータがありません。「配信一覧」からチャットを収集してください。")
         return
-
-    df = pd.DataFrame([{
-        "channel_id": v.channel_id,
-        "名前": v.display_name,
-        "初コメント": v.first_seen_at.strftime("%Y-%m-%d") if v.first_seen_at else "?",
-        "メンバー": "✅" if v.is_member else "",
-        "コメント数": v.comment_count,
-        "スパチャ額": f"¥{v.superchat_total:,}" if v.superchat_total > 0 else "",
-    } for v in viewers])
 
     col1, col2, col3 = st.columns(3)
     with col1:
@@ -87,30 +112,31 @@ def show_viewers():
     with col3:
         sort_by = st.selectbox("並び替え", ["初コメントが古い順", "コメント数順", "名前順"], index=0)
 
+    filtered = viewers
     if search:
-        df = df[df["名前"].str.contains(search, case=False, na=False)]
+        filtered = [v for v in filtered if search.lower() in v.display_name.lower()]
     if member_filter == "メンバーのみ":
-        df = df[df["メンバー"] == "✅"]
+        filtered = [v for v in filtered if v.is_member]
 
-    sort_map = {
-        "初コメントが古い順": ("初コメント", True),
-        "コメント数順": ("コメント数", False),
-        "名前順": ("名前", True),
-    }
-    sort_col, sort_asc = sort_map[sort_by]
-    df = df.sort_values(sort_col, ascending=sort_asc)
+    if sort_by == "初コメントが古い順":
+        filtered.sort(key=lambda v: v.first_seen_at or datetime.min)
+    elif sort_by == "コメント数順":
+        filtered.sort(key=lambda v: -v.comment_count)
+    else:
+        filtered.sort(key=lambda v: v.display_name)
 
-    st.dataframe(df, hide_index=True, use_container_width=True)
+    # 視聴者名ボタンで詳細表示
+    cols = st.columns(6)
+    pages = [filtered[i:i+len(cols)] for i in range(0, len(filtered), len(cols))]
+    for page in pages:
+        cols = st.columns(len(page))
+        for ci, v in enumerate(page):
+            with cols[ci]:
+                if st.button(v.display_name, key=f"v_{v.channel_id}", use_container_width=True):
+                    st.session_state["detail_channel_id"] = v.channel_id
 
-    st.subheader("👤 視聴者詳細")
-    selected_name = st.selectbox(
-        "視聴者を選択", [v.display_name for v in viewers],
-        index=None, placeholder="選択してください..."
-    )
-    if selected_name:
-        matched = [v for v in viewers if v.display_name == selected_name]
-        if matched:
-            show_viewer_detail(matched[0].channel_id)
+    if "detail_channel_id" in st.session_state:
+        show_viewer_detail(st.session_state["detail_channel_id"])
 
 
 def show_viewer_detail(channel_id: str):
@@ -118,19 +144,19 @@ def show_viewer_detail(channel_id: str):
     if not v:
         return
 
-    col1, col2 = st.columns([1, 3])
-    with col1:
-        if v.avatar_url:
-            st.image(v.avatar_url, width=80)
-    with col2:
-        st.markdown(f"### {v.display_name}")
-        st.markdown(f"**初コメント:** {v.first_seen_at.strftime('%Y-%m-%d %H:%M') if v.first_seen_at else '?'}")
-        st.markdown(f"**メンバー:** {'✅ 加入中' if v.is_member else '❌'}")
-        if v.first_member_at:
-            st.markdown(f"**メンバー加入（推定）:** {v.first_member_at.strftime('%Y-%m-%d')}")
-        st.markdown(f"**総コメント数:** {v.comment_count}")
-        if v.superchat_total > 0:
-            st.markdown(f"**スパチャ総額:** ¥{v.superchat_total:,}")
+    with st.container(border=True):
+        col1, col2 = st.columns([1, 4])
+        with col1:
+            if v.avatar_url:
+                st.image(v.avatar_url, width=80)
+        with col2:
+            st.markdown(f"### {v.display_name}")
+            cols = st.columns(4)
+            cols[0].markdown(f"**初コメント**  {v.first_seen_at.strftime('%Y-%m-%d') if v.first_seen_at else '?'}")
+            cols[1].markdown(f"**メンバー**  {'✅' if v.is_member else '❌'}")
+            cols[2].markdown(f"**コメント数**  {v.comment_count}")
+            if v.superchat_total > 0:
+                cols[3].markdown(f"**スパチャ総額**  ¥{v.superchat_total:,}")
 
     events = get_membership_events_by_viewer(channel_id)
     if events:
@@ -139,15 +165,17 @@ def show_viewer_detail(channel_id: str):
             st.markdown(f"- {ev.occurred_at.strftime('%Y-%m-%d')}: **{ev.event_type}** (加入{ev.member_month}ヶ月)")
 
     st.subheader("💬 コメント履歴")
-    comments = get_comments_by_viewer(channel_id, limit=500)
-    if comments:
-        rows = []
-        for c in comments[:200]:
-            mem = "🔴" if c.is_member else "  "
-            dt = c.published_at.strftime("%Y-%m-%d %H:%M")
-            sc = f" 💰{c.super_chat_amount_text}" if c.super_chat_amount_text else ""
-            rows.append(f"`{mem}` {dt}: {c.message_text[:150]}{sc}")
-        st.markdown("\n".join(rows), unsafe_allow_html=True)
+    result = get_comments_by_viewer(channel_id, limit=500)
+    if result:
+        lines = []
+        for comment, video_id, offset in result[:200]:
+            mem = "🔴" if comment.is_member else "  "
+            dt = comment.published_at.strftime("%Y-%m-%d %H:%M")
+            link = yt_markdown(video_id, "▶", max(0, offset))
+            text = comment.message_text[:150]
+            sc = f" 💰{comment.super_chat_amount_text}" if comment.super_chat_amount_text else ""
+            lines.append(f"`{mem}` {dt} {link}: {text}{sc}")
+        st.markdown("\n".join(lines), unsafe_allow_html=True)
     else:
         st.caption("コメント履歴なし")
 
@@ -207,18 +235,16 @@ def show_streams():
         st.info("データベースに配信が登録されていません。")
         return
 
-    df = pd.DataFrame([{
-        "video_id": s.video_id,
-        "title": s.title[:60],
-        "日時": s.published_at.strftime("%Y-%m-%d") if s.published_at else "?",
-        "時間": f"{s.duration_sec // 3600}h{(s.duration_sec % 3600) // 60:02d}m" if s.duration_sec else "?",
-        "コメント数": s.chat_count,
-        "視聴者数": s.unique_viewers,
-        "メン限": "🔒" if s.is_member_only else "",
-    } for s in streams])
-
-    st.dataframe(df, hide_index=True, use_container_width=True)
-
+    for s in streams[:500]:
+        link = yt_markdown(s.video_id, "▶")
+        title = s.title[:80]
+        date = s.published_at.strftime("%Y-%m-%d") if s.published_at else "?"
+        dur = f"{s.duration_sec // 3600}h{(s.duration_sec % 3600) // 60:02d}m" if s.duration_sec else "?"
+        mem = "🔒" if s.is_member_only else ""
+        st.markdown(
+            f"{link} `{date}` {dur} {mem} **{title}**  ({s.chat_count}コメ/{s.unique_viewers}人)",
+            unsafe_allow_html=True,
+        )
 
     st.markdown("---")
     st.markdown(
