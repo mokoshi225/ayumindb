@@ -1,0 +1,19 @@
+AyumiDB v0.2.0 — あゆみんch バックフィル
+✅ Cookie file found: /home/mokoshi/ayumindb/data/cookies.txt
+📡 Total stream entries: 2056
+[1/2056] 【メン限】あきらめの悪い男2... Traceback (most recent call last):
+  File "/home/mokoshi/ayumindb/scripts/backfill.py", line 125, in <module>
+    backfill(batch_size=args.batch, delay=args.delay)
+  File "/home/mokoshi/ayumindb/scripts/backfill.py", line 86, in backfill
+    chat_file = download_chat(video_id, use_cookies=use_cookies)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/mokoshi/ayumindb/ayumindb/collector.py", line 99, in download_chat
+    subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+  File "/usr/lib/python3.12/subprocess.py", line 548, in run
+    with Popen(*popenargs, **kwargs) as process:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/subprocess.py", line 1026, in __init__
+    self._execute_child(args, executable, preexec_fn, close_fds,
+  File "/usr/lib/python3.12/subprocess.py", line 1955, in _execute_child
+    raise child_exception_type(errno_num, err_msg, err_filename)
+FileNotFoundError: [Errno 2] No such file or directory: '--cookies'

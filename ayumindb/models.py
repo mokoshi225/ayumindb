@@ -29,6 +29,7 @@ class Stream:
     chat_count: int = 0
     unique_viewers: int = 0
     is_member_only: bool = False
+    collection_status: str = "pending"
 
 
 @dataclass

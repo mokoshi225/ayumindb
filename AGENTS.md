@@ -17,6 +17,7 @@ ayumindb/
 │   ├── export_html.py      # DB → 静的 HTML レポート
 │   ├── backfill.py         # 全配信バックフィル
 │   └── start_dashboard.bat # Windows 起動用
+│   │   ├── live_monitor.py     # リアルタイムライブ監視
 ├── data/
 │   ├── ayumindb.db   # SQLite
 │   ├── cookies.txt    # Firefox エクスポート（git管理外）
@@ -52,6 +53,13 @@ yt-dlp (live_chat JSON)
 | comments | (auto) | コメント全文 + 投稿者・種類 |
 | membership_events | (auto) | メンバーシップ加入/マイルストーン |
 | collection_log | (auto) | 収集状態追跡 |
+
+## ライブ監視
+
+- `scripts/live_monitor.py` が 5分おきにチャンネルのライブ配信をチェック
+- 新規配信を検知すると yt-dlp でチャットをリアルタイム追跡開始
+- 配信終了後、チャットリプレイがあればフル取得で補完
+- 検知から最長5分のラグがあるが、配信開始からの全コメントをカバー
 
 ## 認証
 

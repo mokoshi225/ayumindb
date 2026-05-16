@@ -241,6 +241,7 @@ def _row_to_stream(r) -> Stream:
         chat_count=r["chat_count"],
         unique_viewers=r["unique_viewers"],
         is_member_only=bool(r["is_member_only"]),
+        collection_status=r["collection_status"],
     )
 
 
