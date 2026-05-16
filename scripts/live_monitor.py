@@ -11,7 +11,7 @@ from ayumindb import VERSION
 from ayumindb.collector import check_live, start_live_capture, CHAT_DIR, COOKIE_FILE
 from ayumindb.parser import parse_chat_file
 from ayumindb.db import (
-    init_db, get_stream, upsert_stream, upsert_viewer,
+    init_db, get_stream, upsert_stream, upsert_viewer, get_conn,
     insert_comments_batch, insert_membership_event,
     update_stream_collection_status, Stream,
 )
@@ -49,6 +49,16 @@ def finish_capture(video_id: str, title: str):
 
     try:
         result = parse_chat_file(chat_file)
+
+        # 配信の実際の開始時刻を最初のコメントから設定
+        if result["comments"]:
+            first_ts = result["comments"][0].published_at
+            conn = get_conn()
+            conn.execute("UPDATE streams SET stream_started_at = ? WHERE video_id = ?",
+                         (first_ts.isoformat(), video_id))
+            conn.commit()
+            conn.close()
+
         for v in result["viewers"].values():
             upsert_viewer(v)
         if result["comments"]:

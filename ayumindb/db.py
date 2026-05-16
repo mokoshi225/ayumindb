@@ -26,6 +26,7 @@ CREATE TABLE IF NOT EXISTS streams (
     video_id        TEXT PRIMARY KEY,
     title           TEXT NOT NULL DEFAULT '',
     published_at    TEXT,
+    stream_started_at TEXT,
     live_chat_id    TEXT NOT NULL DEFAULT '',
     duration_sec    INTEGER NOT NULL DEFAULT 0,
     chat_count      INTEGER NOT NULL DEFAULT 0,
@@ -90,6 +91,11 @@ def get_conn() -> sqlite3.Connection:
 def init_db():
     conn = get_conn()
     conn.executescript(SCHEMA_SQL)
+    # Migration: add stream_started_at column for existing DBs
+    try:
+        conn.execute("ALTER TABLE streams ADD COLUMN stream_started_at TEXT")
+    except sqlite3.OperationalError:
+        pass  # column already exists
     conn.commit()
     conn.close()
 
@@ -127,7 +133,7 @@ def get_all_viewers() -> list[Viewer]:
     rows = conn.execute("""
         SELECT v.*,
                (SELECT COUNT(*) FROM comments c WHERE c.viewer_id = v.channel_id) as comment_count,
-               COALESCE((SELECT SUM(CAST(REPLACE(c.super_chat_amount_text, '¥', '') AS INTEGER))
+               COALESCE((SELECT SUM(CAST(REPLACE(REPLACE(c.super_chat_amount_text, '¥', ''), ',', '') AS INTEGER))
                          FROM comments c
                          WHERE c.viewer_id = v.channel_id AND c.message_type = 'superChatEvent'), 0) as superchat_total
         FROM viewers v
@@ -142,7 +148,7 @@ def get_viewer(channel_id: str) -> Optional[Viewer]:
     r = conn.execute("""
         SELECT v.*,
                (SELECT COUNT(*) FROM comments c WHERE c.viewer_id = v.channel_id) as comment_count,
-               COALESCE((SELECT SUM(CAST(REPLACE(c.super_chat_amount_text, '¥', '') AS INTEGER))
+               COALESCE((SELECT SUM(CAST(REPLACE(REPLACE(c.super_chat_amount_text, '¥', ''), ',', '') AS INTEGER))
                          FROM comments c
                          WHERE c.viewer_id = v.channel_id AND c.message_type = 'superChatEvent'), 0) as superchat_total
         FROM viewers v WHERE v.channel_id = ?
@@ -171,15 +177,18 @@ def _row_to_viewer(r) -> Viewer:
 def upsert_stream(s: Stream):
     conn = get_conn()
     conn.execute("""
-        INSERT INTO streams (video_id, title, published_at, live_chat_id, duration_sec,
+        INSERT INTO streams (video_id, title, published_at, stream_started_at, live_chat_id, duration_sec,
                              chat_count, unique_viewers, is_member_only, collection_status)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending')
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
         ON CONFLICT(video_id) DO UPDATE SET
             title = COALESCE(NULLIF(EXCLUDED.title, ''), streams.title),
             published_at = COALESCE(NULLIF(EXCLUDED.published_at, ''), streams.published_at),
+            stream_started_at = COALESCE(EXCLUDED.stream_started_at, streams.stream_started_at),
             duration_sec = EXCLUDED.duration_sec,
             is_member_only = EXCLUDED.is_member_only
-    """, (s.video_id, s.title, s.published_at.isoformat() if s.published_at else None,
+    """, (s.video_id, s.title,
+          s.published_at.isoformat() if s.published_at else None,
+          s.stream_started_at.isoformat() if s.stream_started_at else None,
           s.live_chat_id, s.duration_sec, s.chat_count, s.unique_viewers, int(s.is_member_only)))
     conn.commit()
     conn.close()
@@ -236,6 +245,7 @@ def _row_to_stream(r) -> Stream:
         video_id=r["video_id"],
         title=r["title"],
         published_at=_parse_dt(r["published_at"]),
+        stream_started_at=_parse_dt(r["stream_started_at"]),
         live_chat_id=r["live_chat_id"],
         duration_sec=r["duration_sec"],
         chat_count=r["chat_count"],
@@ -280,14 +290,19 @@ def insert_comments_batch(comments: list[Comment]):
     conn.close()
 
 
-def get_comments_by_viewer(viewer_id: str, limit: int = 500) -> list[Comment]:
+def get_comments_by_viewer(viewer_id: str, limit: int = 500) -> list[tuple[Comment, str, int]]:
     conn = get_conn()
     rows = conn.execute("""
-        SELECT c.* FROM comments c WHERE c.viewer_id = ?
+        SELECT c.*, s.video_id,
+               CAST(COALESCE(strftime('%s', c.published_at), '0') AS INTEGER)
+               - CAST(COALESCE(strftime('%s', COALESCE(s.stream_started_at, s.published_at)), '0') AS INTEGER) as time_offset
+        FROM comments c
+        JOIN streams s ON c.stream_id = s.video_id
+        WHERE c.viewer_id = ?
         ORDER BY c.published_at DESC LIMIT ?
     """, (viewer_id, limit)).fetchall()
     conn.close()
-    return [_row_to_comment(r) for r in rows]
+    return [(_row_to_comment(r), r["video_id"], r["time_offset"]) for r in rows]
 
 
 def get_comments_by_stream(stream_id: str, limit: int = 5000) -> list[Comment]:
@@ -298,6 +313,21 @@ def get_comments_by_stream(stream_id: str, limit: int = 5000) -> list[Comment]:
     """, (stream_id, limit)).fetchall()
     conn.close()
     return [_row_to_comment(r) for r in rows]
+
+
+def search_comments(query: str, limit: int = 200) -> list[tuple[Comment, str, int]]:
+    conn = get_conn()
+    rows = conn.execute("""
+        SELECT c.*, s.video_id,
+               CAST(COALESCE(strftime('%s', c.published_at), '0') AS INTEGER)
+               - CAST(COALESCE(strftime('%s', COALESCE(s.stream_started_at, s.published_at)), '0') AS INTEGER) as time_offset
+        FROM comments c
+        JOIN streams s ON c.stream_id = s.video_id
+        WHERE c.message_text LIKE ?
+        ORDER BY c.published_at DESC LIMIT ?
+    """, (f"%{query}%", limit)).fetchall()
+    conn.close()
+    return [(_row_to_comment(r), r["video_id"], r["time_offset"]) for r in rows]
 
 
 def _row_to_comment(r) -> Comment:
@@ -396,7 +426,7 @@ def get_rankings(rank_type: str, limit: int = 50) -> list[dict]:
         rows = conn.execute("""
             SELECT v.channel_id, v.display_name, v.first_seen_at,
                    COUNT(c.id) as comment_count,
-                   SUM(CAST(REPLACE(c.super_chat_amount_text, '¥', '') AS INTEGER)) as superchat_total
+                   SUM(CAST(REPLACE(REPLACE(c.super_chat_amount_text, '¥', ''), ',', '') AS INTEGER)) as superchat_total
             FROM viewers v
             JOIN comments c ON c.viewer_id = v.channel_id
             WHERE c.message_type = 'superChatEvent' AND v.is_owner = 0
