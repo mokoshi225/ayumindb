@@ -41,6 +41,7 @@ def import_chat_to_db(filepath: Path, use_cookies: bool):
 
 
 def backfill(batch_size: int = 20, delay: float = 5.0):
+    print(f"AyumiDB v{VERSION} — あゆみんch バックフィル")
     init_db()
 
     cookie_available = COOKIE_FILE.exists()

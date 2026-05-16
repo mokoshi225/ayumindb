@@ -23,7 +23,8 @@ ayumindb/
 │   ├── dashboard.html # 静的 HTML レポート
 │   └── chats/         # .live_chat.json 保管
 ├── AGENTS.md
-├── README.html
+├── README.md          # GitHub表示用
+├── README.html        # リッチ表示用（GitHub非対応）
 └── pyproject.toml
 ```
 
@@ -63,6 +64,12 @@ yt-dlp (live_chat JSON)
 - yt-dlp の `--sleep-requests 3` で 3秒間隔を強制
 - `backfill.py` の `--batch 20` で 20件ごとに長めの休憩
 - 1日200件までが安全圏
+
+## 表示
+
+- **Streamlit ダッシュボード** (`app.py`): フルインタラクティブ。視聴者詳細・コメント掘り下げ可
+- **静的 HTML** (`export_html.py` → `dashboard.html`): サーバー不要。再生成するまでスナップショット固定
+- コメント履歴は 1行「日時: 内容」のコンパクト形式
 
 ## メンバーシップ検出
 
