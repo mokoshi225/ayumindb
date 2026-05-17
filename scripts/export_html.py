@@ -6,13 +6,14 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from ayumindb import VERSION, GITHUB_URL
-from ayumindb.db import init_db, get_stats, get_rankings, get_all_viewers, get_all_streams
+from ayumindb.db import init_db, get_stats, get_rankings, get_all_viewers, get_all_streams, recompute_viewer_stats
 
 OUTPUT = Path(__file__).parent.parent / "data" / "dashboard.html"
 
 
 def build_html():
     init_db()
+    recompute_viewer_stats()
     stats = get_stats()
 
     oldest = get_rankings("oldest", 50)

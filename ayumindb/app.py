@@ -34,6 +34,10 @@ def _cached_stats():
     return get_stats()
 
 @st.cache_data(ttl=60)
+def _cached_streams():
+    return get_all_streams()
+
+@st.cache_data(ttl=60)
 def _cached_stream_time_series(stream_id: str, bucket_sec: int = 300):
     return get_stream_time_series(stream_id, bucket_sec)
 
@@ -295,7 +299,7 @@ def show_rankings():
 def show_streams():
     st.subheader("📹 配信一覧")
 
-    streams = get_all_streams()
+    streams = _cached_streams()
     if not streams:
         st.info("データベースに配信が登録されていません。")
         return

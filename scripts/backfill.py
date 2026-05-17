@@ -12,7 +12,7 @@ from ayumindb.parser import parse_chat_file
 from ayumindb.db import (
     init_db, get_conn, upsert_stream, upsert_viewer, insert_comments_batch,
     insert_membership_event, update_stream_collection_status, get_stream,
-    Stream as DBStream,
+    recompute_viewer_stats, Stream as DBStream,
 )
 from typing import Optional
 from datetime import datetime
@@ -165,6 +165,9 @@ def backfill(batch_size: int = 20, delay: float = 5.0):
     print(f"   Total comments: {total_comments}")
     print(f"   Total viewers:  {total_viewers}")
     print(f"   Total membership events: {total_membership}")
+    print(f"🔄 Recomputing viewer stats...")
+    recompute_viewer_stats()
+    print(f"✅ Viewer stats updated")
 
 
 if __name__ == "__main__":

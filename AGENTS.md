@@ -8,7 +8,17 @@
 2. **新しい失敗に遭遇したら `failures.md` に追記すること。** 症状・原因・解決策・教訓を必ず書く。成功したらその直後に記録する。
 3. **`AGENTS.md` 自体も必要に応じて更新すること。** アーキテクチャの変更、新しいスクリプトの追加、設定値の変更はここに反映する。
 4. **バージョンは `ayumindb/__init__.py` の VERSION を更新すること。** コード修正のたびにインクリメントする。
-5. **ブランチ運用: `main` を直接編集しない。** コード修正は必ず `develop` から派生させた作業ブランチで行う。`main` はマージ専用。
+5. **ブランチ運用（改定）**:
+   - **`main` を直接編集しない。** `main` はマージ専用の安定ブランチ。
+   - **作業フロー**: `main` から feature branch を作成 → 作業完了 → `main` にマージ → branch 削除。
+   - **分岐条件（いずれかに該当したら必ず branch を作成）**:
+     - 2ファイル以上の変更
+     - ロジックの追加・変更
+     - DBスキーマの変更
+     - 設定値の変更（`__init__.py` のバージョン更新を除く）
+   - **例外（main直編集可）**: 1ファイルのタイポ修正のみ。
+   - **branch名**: `feature/<簡潔な説明>` または `fix/<簡潔な説明>`。
+   - **セッション開始時の確認**: 作業前に `git branch` で現在のブランチと変更状態を確認する。`main` にいる場合は分岐条件に照らして branch が必要か判断する。
 
 ## 全体構成
 
@@ -70,6 +80,7 @@ yt-dlp (live_chat JSON)
 | collection_log | (auto) | 収集状態追跡 |
 
 - `streams.stream_started_at`: 配信の実際の開始時刻。最初のコメントの `timestampUsec` から設定。
+- `viewers.comment_count` / `viewers.superchat_total`: 実体化された集計値。コメント挿入時にインクリメント更新され、`recompute_viewer_stats()` で整合性を確保。
 
 ## データフロー（詳細）
 
@@ -84,6 +95,10 @@ yt-dlp (live_chat JSON)
         │     - time_offset = comment_time - stream_started_at
         │     - stream_started_at は最初のコメントのタイムスタンプ
         │     - コメントの ▶ リンク: youtu.be/{video_id}?t={time_offset}
+        │     - viewer.comment_count / superchat_total はコメント挿入時に
+        │       インクリメント更新（実体化カラム）。サブクエリ不要。
+        │     - backfill.py 完了時 / export_html.py 実行時に
+        │       recompute_viewer_stats() で整合性を確保
         │
         ├── app.py ──→ Streamlit ダッシュボード（http://localhost:8501）
         │                  @st.cache_data(ttl=60) でクエリ結果をキャッシュ

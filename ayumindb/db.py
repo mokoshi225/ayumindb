@@ -91,16 +91,35 @@ def get_conn() -> sqlite3.Connection:
 def init_db():
     conn = get_conn()
     conn.executescript(SCHEMA_SQL)
-    # Migration: add stream_started_at column for existing DBs
-    try:
-        conn.execute("ALTER TABLE streams ADD COLUMN stream_started_at TEXT")
-    except sqlite3.OperationalError:
-        pass  # column already exists
+    # Migration: add materialized viewer stats columns (idempotent)
+    for col in (
+        "ALTER TABLE viewers ADD COLUMN comment_count INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE viewers ADD COLUMN superchat_total INTEGER NOT NULL DEFAULT 0",
+    ):
+        try:
+            conn.execute(col)
+        except sqlite3.OperationalError:
+            pass  # column already exists
     conn.commit()
     conn.close()
 
 
 # ---- Viewer operations ----
+
+def recompute_viewer_stats():
+    """Recompute and store comment_count / superchat_total for all viewers from actual comment data."""
+    conn = get_conn()
+    conn.execute("""
+        UPDATE viewers SET
+            comment_count = (SELECT COUNT(*) FROM comments c WHERE c.viewer_id = viewers.channel_id),
+            superchat_total = COALESCE(
+                (SELECT SUM(CAST(REPLACE(REPLACE(c.super_chat_amount_text, '¥', ''), ',', '') AS INTEGER))
+                 FROM comments c
+                 WHERE c.viewer_id = viewers.channel_id AND c.message_type = 'superChatEvent'), 0)
+    """)
+    conn.commit()
+    conn.close()
+
 
 def upsert_viewer(v: Viewer):
     conn = get_conn()
@@ -131,12 +150,7 @@ def upsert_viewer(v: Viewer):
 def get_all_viewers() -> list[Viewer]:
     conn = get_conn()
     rows = conn.execute("""
-        SELECT v.*,
-               (SELECT COUNT(*) FROM comments c WHERE c.viewer_id = v.channel_id) as comment_count,
-               COALESCE((SELECT SUM(CAST(REPLACE(REPLACE(c.super_chat_amount_text, '¥', ''), ',', '') AS INTEGER))
-                         FROM comments c
-                         WHERE c.viewer_id = v.channel_id AND c.message_type = 'superChatEvent'), 0) as superchat_total
-        FROM viewers v
+        SELECT v.* FROM viewers v
         ORDER BY v.first_seen_at ASC
     """).fetchall()
     conn.close()
@@ -146,12 +160,7 @@ def get_all_viewers() -> list[Viewer]:
 def get_viewer(channel_id: str) -> Optional[Viewer]:
     conn = get_conn()
     r = conn.execute("""
-        SELECT v.*,
-               (SELECT COUNT(*) FROM comments c WHERE c.viewer_id = v.channel_id) as comment_count,
-               COALESCE((SELECT SUM(CAST(REPLACE(REPLACE(c.super_chat_amount_text, '¥', ''), ',', '') AS INTEGER))
-                         FROM comments c
-                         WHERE c.viewer_id = v.channel_id AND c.message_type = 'superChatEvent'), 0) as superchat_total
-        FROM viewers v WHERE v.channel_id = ?
+        SELECT v.* FROM viewers v WHERE v.channel_id = ?
     """, (channel_id,)).fetchone()
     conn.close()
     return _row_to_viewer(r) if r else None
@@ -197,10 +206,7 @@ def upsert_stream(s: Stream):
 def get_all_streams() -> list[Stream]:
     conn = get_conn()
     rows = conn.execute("""
-        SELECT s.*,
-               (SELECT COUNT(*) FROM comments c WHERE c.stream_id = s.video_id) as chat_count,
-               (SELECT COUNT(DISTINCT c.viewer_id) FROM comments c WHERE c.stream_id = s.video_id) as unique_viewers
-        FROM streams s
+        SELECT s.* FROM streams s
         ORDER BY s.published_at DESC
     """).fetchall()
     conn.close()
@@ -210,10 +216,7 @@ def get_all_streams() -> list[Stream]:
 def get_stream(video_id: str) -> Optional[Stream]:
     conn = get_conn()
     r = conn.execute("""
-        SELECT s.*,
-               (SELECT COUNT(*) FROM comments c WHERE c.stream_id = s.video_id) as chat_count,
-               (SELECT COUNT(DISTINCT c.viewer_id) FROM comments c WHERE c.stream_id = s.video_id) as unique_viewers
-        FROM streams s WHERE s.video_id = ?
+        SELECT s.* FROM streams s WHERE s.video_id = ?
     """, (video_id,)).fetchone()
     conn.close()
     return _row_to_stream(r) if r else None
@@ -267,11 +270,29 @@ def insert_comment(c: Comment):
         """, (c.message_id, c.viewer_id, c.stream_id,
               c.published_at.isoformat(), c.message_text, c.message_type,
               int(c.is_member), c.super_chat_amount_text))
+        # Increment viewer aggregates
+        amount = _parse_superchat_amount(c.super_chat_amount_text)
+        conn.execute("""
+            UPDATE viewers SET
+                comment_count = comment_count + 1,
+                superchat_total = superchat_total + ?
+            WHERE channel_id = ?
+        """, (amount, c.viewer_id))
         conn.commit()
     except sqlite3.IntegrityError:
         pass  # duplicate message_id
     finally:
         conn.close()
+
+
+def _parse_superchat_amount(text: str) -> int:
+    """Parse '¥15,800' -> 15800. Returns 0 on failure."""
+    if not text:
+        return 0
+    try:
+        return int(text.replace('¥', '').replace(',', ''))
+    except (ValueError, TypeError):
+        return 0
 
 
 def insert_comments_batch(comments: list[Comment]):
@@ -286,6 +307,20 @@ def insert_comments_batch(comments: list[Comment]):
             (message_id, viewer_id, stream_id, published_at, message_text, message_type, is_member, super_chat_amount_text)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     """, rows)
+    # Increment viewer aggregates per viewer
+    viewer_deltas: dict[str, dict[str, int]] = {}
+    for c in comments:
+        if c.viewer_id not in viewer_deltas:
+            viewer_deltas[c.viewer_id] = {"count": 0, "superchat": 0}
+        viewer_deltas[c.viewer_id]["count"] += 1
+        viewer_deltas[c.viewer_id]["superchat"] += _parse_superchat_amount(c.super_chat_amount_text)
+    for vid, delta in viewer_deltas.items():
+        conn.execute("""
+            UPDATE viewers SET
+                comment_count = comment_count + ?,
+                superchat_total = superchat_total + ?
+            WHERE channel_id = ?
+        """, (delta["count"], delta["superchat"], vid))
     conn.commit()
     conn.close()
 
@@ -466,32 +501,25 @@ def get_rankings(rank_type: str, limit: int = 50) -> list[dict]:
     conn = get_conn()
     if rank_type == "oldest":
         rows = conn.execute("""
-            SELECT v.channel_id, v.display_name, v.first_seen_at,
-                   (SELECT COUNT(*) FROM comments c WHERE c.viewer_id = v.channel_id) as comment_count
+            SELECT v.channel_id, v.display_name, v.first_seen_at, v.comment_count
             FROM viewers v
-            WHERE v.channel_id NOT IN (SELECT v2.channel_id FROM viewers v2 WHERE v2.is_owner = 1)
+            WHERE v.is_owner = 0
             ORDER BY v.first_seen_at ASC LIMIT ?
         """, (limit,)).fetchall()
     elif rank_type == "comments":
         rows = conn.execute("""
-            SELECT v.channel_id, v.display_name, v.first_seen_at,
-                   COUNT(c.id) as comment_count
+            SELECT v.channel_id, v.display_name, v.first_seen_at, v.comment_count
             FROM viewers v
-            JOIN comments c ON c.viewer_id = v.channel_id
             WHERE v.is_owner = 0
-            GROUP BY v.channel_id
-            ORDER BY comment_count DESC LIMIT ?
+            ORDER BY v.comment_count DESC LIMIT ?
         """, (limit,)).fetchall()
     elif rank_type == "superchat":
         rows = conn.execute("""
             SELECT v.channel_id, v.display_name, v.first_seen_at,
-                   COUNT(c.id) as comment_count,
-                   SUM(CAST(REPLACE(REPLACE(c.super_chat_amount_text, '¥', ''), ',', '') AS INTEGER)) as superchat_total
+                   v.comment_count, v.superchat_total
             FROM viewers v
-            JOIN comments c ON c.viewer_id = v.channel_id
-            WHERE c.message_type = 'superChatEvent' AND v.is_owner = 0
-            GROUP BY v.channel_id
-            ORDER BY superchat_total DESC LIMIT ?
+            WHERE v.is_owner = 0 AND v.superchat_total > 0
+            ORDER BY v.superchat_total DESC LIMIT ?
         """, (limit,)).fetchall()
     else:
         rows = []
