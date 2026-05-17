@@ -91,7 +91,7 @@ def backfill(batch_size: int = 20, delay: float = 5.0):
             continue
 
         info = get_video_info(video_id, use_cookies=cookie_available)
-        is_member_only = info.get("availability") == "members_only"
+        is_member_only = info.get("availability") in ("members_only", "subscriber_only")
         if not is_member_only:
             is_member_only = any(kw in title for kw in ("メン限", "メンバーシップ", "メンバー限定", "有料サブスク", "サブスク限定"))
         use_cookies = is_member_only and cookie_available

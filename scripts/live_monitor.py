@@ -135,7 +135,7 @@ def main_loop():
 
             log(f"🔴 LIVE detected: {title[:50]}")
             info = get_video_info(vid, use_cookies=COOKIE_FILE.exists())
-            is_member_only = info.get("availability") == "members_only"
+            is_member_only = info.get("availability") in ("members_only", "subscriber_only")
             if not is_member_only:
                 is_member_only = any(kw in title for kw in ("メン限", "メンバーシップ", "メンバー限定", "有料サブスク", "サブスク限定"))
             use_cookies = is_member_only and COOKIE_FILE.exists()

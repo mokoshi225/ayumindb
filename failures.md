@@ -77,15 +77,15 @@
 
 ### 解決策（第1層: availability フィールド対応）
 1. `get_video_info()` を先に呼び、結果の `availability` フィールドを確認する
-2. `availability == "members_only"` を `is_member_only` の最優先判定基準にする
+2. `availability in ("members_only", "subscriber_only")` を `is_member_only` の最優先判定基準にする
+   ※ YouTube はメンバー限定動画に対して `"subscriber_only"` を返す。`"members_only"` は稀。
 3. タイトルキーワードはフォールバックとして維持
 4. `get_video_info()` には `use_cookies=cookie_available` を渡す
 
 ### 残課題: availability だけでは不十分だった
 yt-dlp の `--dump-json` は全てのメンバー限定動画で
-`availability: "members_only"` を返すとは限らない。
-VOD自体は公開でもチャットリプレイのみメン限の場合、availability は
-`"public"` のままである。よって第1層をすり抜ける動画が存在する。
+`availability` フィールド自体を返さない場合がある（特に動画は公開だが
+チャットリプレイのみメン限の場合）。よって第1層をすり抜ける動画が存在する。
 
 ### 原因（第2層） + 解決策: ダウンロード再試行による検出
 `download_chat()` が None を返したとき、cookie なしでの試行だった場合は
@@ -99,14 +99,15 @@ DB の `is_member_only` を UPDATE する。合わせてタイトルキーワー
 2. `live_monitor.py`: `finish_capture()` 内で chat_file が存在しない場合に
    同様の再試行を実施。成功したら is_member_only を更新
 3. タイトルキーワード拡張: `any(kw in title for kw in ("メン限", "メンバーシップ", "メンバー限定", "有料サブスク", "サブスク限定"))`
-4. VERSION: 0.5.2 → 0.5.3
+4. VERSION: 0.5.2 → 0.5.4
 
 ### 教訓
+- `availability` 値は `"members_only"` だけでなく `"subscriber_only"` もありえる。両方チェックする
 - `availability` フィールドはメン限判定の補助に使えるが、全てのケースをカバーするわけではない
 - 最も確実な判定は「cookie なしで失敗し、cookie ありで成功するか」という実際の挙動
 - cookie 再試行は追加のネットワークコストがかかるが、メン限動画（全体の一部）のみに発生する
 - タイトルキーワードは「高速パス」として維持し、再試行を減らす
-- 変更ファイル: `backfill.py`, `live_monitor.py`, `__init__.py` (VERSION 0.5.3)
+- 変更ファイル: `backfill.py`, `live_monitor.py`, `__init__.py` (VERSION 0.5.4)
 
 このセッションで起きた失敗とその解決策を記録する。
 新しい失敗を見つけたら追記すること。
