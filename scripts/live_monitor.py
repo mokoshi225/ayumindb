@@ -28,14 +28,31 @@ def log(msg: str):
 
 def finish_capture(video_id: str, title: str):
     """キャプチャ完了処理 — チャットファイルをパースしてDBに取り込み"""
+    import subprocess as sp
     chat_file = CHAT_DIR / f"{video_id}.live_chat.json"
     if not chat_file.exists():
-        log(f"  ⚠️ {video_id}: チャットファイルなし")
-        update_stream_collection_status(video_id, "no_chat")
-        return
+        if COOKIE_FILE.exists():
+            cmd = [
+                "yt-dlp", "--write-subs", "--sub-langs", "live_chat",
+                "--skip-download", "--ignore-no-formats-error",
+                "--sleep-requests", "2",
+                "-o", str(CHAT_DIR / "%(id)s"),
+                f"https://www.youtube.com/watch?v={video_id}",
+            ]
+            cmd[1:1] = ["--cookies", str(COOKIE_FILE)]
+            sp.run(cmd, capture_output=True, text=True, timeout=300)
+        if chat_file.exists():
+            conn = get_conn()
+            conn.execute("UPDATE streams SET is_member_only = 1 WHERE video_id = ?", (video_id,))
+            conn.commit()
+            conn.close()
+            log(f"  🔒 {title[:40]}: members-only, retry with cookies succeeded")
+        else:
+            log(f"  ⚠️ {video_id}: チャットファイルなし")
+            update_stream_collection_status(video_id, "no_chat")
+            return
 
     # 配信終了後、チャットリプレイが使えるならフル取得で上書き
-    import subprocess as sp
     cmd = [
         "yt-dlp", "--write-subs", "--sub-langs", "live_chat",
         "--skip-download", "--ignore-no-formats-error",
@@ -116,12 +133,12 @@ def main_loop():
                 # プロセスが死んでいたら回収
                 del CAPTURE_PROCESSES[vid]
 
-            is_member_only = "メン限" in title or "メンバーシップ" in title
-            use_cookies = is_member_only and COOKIE_FILE.exists()
-
             log(f"🔴 LIVE detected: {title[:50]}")
-            # 配信メタデータを取得（published_at, duration_sec）
-            info = get_video_info(vid, use_cookies=use_cookies)
+            info = get_video_info(vid, use_cookies=COOKIE_FILE.exists())
+            is_member_only = info.get("availability") == "members_only"
+            if not is_member_only:
+                is_member_only = any(kw in title for kw in ("メン限", "メンバーシップ", "メンバー限定", "有料サブスク", "サブスク限定"))
+            use_cookies = is_member_only and COOKIE_FILE.exists()
             pub = info.get("upload_date")
             pub_dt = datetime.strptime(pub, "%Y%m%d") if pub else None
             duration = info.get("duration", 0)

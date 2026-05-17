@@ -1,4 +1,28 @@
-# Failures Log
+　# Failures Log
+
+---
+
+## 2026-05-17: AGENTS.md の「セッション開始時の確認」を実施せずに作業を始めた
+
+### 症状
+セッション開始時に `git branch` で現在のブランチと変更状態を確認せず、
+いきなりコードリーディングとクエリ実行に入った。
+`failures.md` だけ読み、`AGENTS.md` 全体を読んでいなかったため、
+ブランチ運用ルールを守れていなかった可能性がある。
+
+### 原因
+- `AGENTS.md` に「作業前に `git branch` で確認」「`main` にいる場合は branch が必要か判断」と明記されていることを把握していなかった
+- システムプロンプト経由で `AGENTS.md` の内容は部分的に与えられていたが、ファイルそのものを明示的に読んでいなかった
+
+### 解決策（今後の運用）
+1. `AGENTS.md` に明示的に目を通してから作業を始める
+2. 特に「セッションを跨ぐ永続指示」（ブランチ運用、バージョン更新）は常に確認する
+3. `git branch` で現在の状態を確認してからコード変更に入る
+
+### 教訓
+- `failures.md` を読むことだけに集中して `AGENTS.md` を疎かにすると、ブランチ運用やバージョン管理ルールに違反するリスクがある
+- システムプロンプトに埋め込まれた情報だけに頼らず、該当ファイルを直接読む
+- 「作業開始前に読む」という指示は `failures.md` に限らず、`AGENTS.md` の全項目が対象
 
 ---
 
@@ -33,6 +57,56 @@
 - 生ファイルを読む関数は、ファイル構造の前提が変わると壊れる
 - 同じ `timestampUsec` でも `_extract_stream_date`（raw file）と
   `parse_chat_file`（parser.py）で異なる結果になる可能性を考慮する
+
+---
+
+## 2026-05-17: メン限判定が不十分 — availability フィールドだけでは不確定だった
+
+### 症状
+メンバー限定動画（例: 「有料サブスク限定で悪口とか許せんわ。。。｣）が
+`is_member_only = False` になり、メン限と判定されない。
+ダッシュボードの「メン限」列に 🔒 が表示されず、
+チャット取得時にも cookie が使われないため収集に失敗する。
+
+### 原因（第1層）
+`backfill.py` と `live_monitor.py` の両方で `is_member_only` を
+`"メン限" in title or "メンバーシップ" in title` という
+タイトルの部分一致だけで判定していた。
+`yt-dlp --dump-json` の出力には `availability: "members_only"` という
+フィールドがあるが、全く参照していなかった。
+
+### 解決策（第1層: availability フィールド対応）
+1. `get_video_info()` を先に呼び、結果の `availability` フィールドを確認する
+2. `availability == "members_only"` を `is_member_only` の最優先判定基準にする
+3. タイトルキーワードはフォールバックとして維持
+4. `get_video_info()` には `use_cookies=cookie_available` を渡す
+
+### 残課題: availability だけでは不十分だった
+yt-dlp の `--dump-json` は全てのメンバー限定動画で
+`availability: "members_only"` を返すとは限らない。
+VOD自体は公開でもチャットリプレイのみメン限の場合、availability は
+`"public"` のままである。よって第1層をすり抜ける動画が存在する。
+
+### 原因（第2層） + 解決策: ダウンロード再試行による検出
+`download_chat()` が None を返したとき、cookie なしでの試行だった場合は
+cookie ありで再試行する。再試行が成功したら「メン限だった」と確定し、
+DB の `is_member_only` を UPDATE する。合わせてタイトルキーワードも拡張した。
+
+具体的な変更:
+1. `backfill.py`: `download_chat()` 失敗時、`not use_cookies and cookie_available` なら
+   `download_chat(video_id, use_cookies=True)` で再試行。成功したら
+   `UPDATE streams SET is_member_only = 1` を実行
+2. `live_monitor.py`: `finish_capture()` 内で chat_file が存在しない場合に
+   同様の再試行を実施。成功したら is_member_only を更新
+3. タイトルキーワード拡張: `any(kw in title for kw in ("メン限", "メンバーシップ", "メンバー限定", "有料サブスク", "サブスク限定"))`
+4. VERSION: 0.5.2 → 0.5.3
+
+### 教訓
+- `availability` フィールドはメン限判定の補助に使えるが、全てのケースをカバーするわけではない
+- 最も確実な判定は「cookie なしで失敗し、cookie ありで成功するか」という実際の挙動
+- cookie 再試行は追加のネットワークコストがかかるが、メン限動画（全体の一部）のみに発生する
+- タイトルキーワードは「高速パス」として維持し、再試行を減らす
+- 変更ファイル: `backfill.py`, `live_monitor.py`, `__init__.py` (VERSION 0.5.3)
 
 このセッションで起きた失敗とその解決策を記録する。
 新しい失敗を見つけたら追記すること。

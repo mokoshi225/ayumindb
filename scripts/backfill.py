@@ -90,11 +90,11 @@ def backfill(batch_size: int = 20, delay: float = 5.0):
             skipped += 1
             continue
 
-        is_member_only = "メン限" in title or "メンバーシップ" in title
+        info = get_video_info(video_id, use_cookies=cookie_available)
+        is_member_only = info.get("availability") == "members_only"
+        if not is_member_only:
+            is_member_only = any(kw in title for kw in ("メン限", "メンバーシップ", "メンバー限定", "有料サブスク", "サブスク限定"))
         use_cookies = is_member_only and cookie_available
-
-        # 配信メタデータを取得（publish日時）
-        info = get_video_info(video_id, use_cookies=use_cookies)
         pub = info.get("upload_date")
         if pub:
             pub_dt = datetime.strptime(pub, "%Y%m%d")
@@ -113,6 +113,15 @@ def backfill(batch_size: int = 20, delay: float = 5.0):
         print(f"[{processed + 1}/{len(stream_list_raw)}] {title[:50]}... ", end="", flush=True)
 
         chat_file = download_chat(video_id, use_cookies=use_cookies)
+        if not chat_file and not use_cookies and cookie_available:
+            chat_file = download_chat(video_id, use_cookies=True)
+            if chat_file:
+                is_member_only = True
+                conn = get_conn()
+                conn.execute("UPDATE streams SET is_member_only = 1 WHERE video_id = ?", (video_id,))
+                conn.commit()
+                conn.close()
+                use_cookies = True
         if not chat_file:
             update_stream_collection_status(video_id, "no_chat")
             print("⚠️ No chat")
