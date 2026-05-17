@@ -8,10 +8,10 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from ayumindb import VERSION
-from ayumindb.collector import check_live, start_live_capture, CHAT_DIR, COOKIE_FILE
+from ayumindb.collector import check_live, start_live_capture, get_video_info, CHAT_DIR, COOKIE_FILE
 from ayumindb.parser import parse_chat_file
 from ayumindb.db import (
-    init_db, get_stream, upsert_stream, upsert_viewer,
+    init_db, get_stream, upsert_stream, upsert_viewer, get_conn,
     insert_comments_batch, insert_membership_event,
     update_stream_collection_status, Stream,
 )
@@ -47,8 +47,30 @@ def finish_capture(video_id: str, title: str):
         cmd[1:1] = ["--cookies", str(COOKIE_FILE)]
     sp.run(cmd, capture_output=True, text=True, timeout=300)
 
+    # 配信終了後に確定したメタデータを取得（duration_sec 補完）
+    info = get_video_info(video_id, use_cookies=COOKIE_FILE.exists())
+    pub = info.get("upload_date")
+    pub_dt = datetime.strptime(pub, "%Y%m%d") if pub else None
+    duration = info.get("duration", 0)
+
     try:
         result = parse_chat_file(chat_file)
+
+        conn = get_conn()
+        # 配信の実際の開始時刻を最初のコメントから設定
+        if result["comments"]:
+            first_ts = result["comments"][0].published_at
+            conn.execute("UPDATE streams SET stream_started_at = ? WHERE video_id = ?",
+                         (first_ts.isoformat(), video_id))
+        # published_at / duration_sec を補完（live検出時に取れなかった場合など）
+        if pub_dt:
+            conn.execute("UPDATE streams SET published_at = ? WHERE video_id = ? AND published_at IS NULL",
+                         (pub_dt.isoformat(), video_id))
+        if duration:
+            conn.execute("UPDATE streams SET duration_sec = ? WHERE video_id = ? AND duration_sec = 0",
+                         (duration, video_id))
+        conn.commit()
+        conn.close()
         for v in result["viewers"].values():
             upsert_viewer(v)
         if result["comments"]:
@@ -98,8 +120,16 @@ def main_loop():
             use_cookies = is_member_only and COOKIE_FILE.exists()
 
             log(f"🔴 LIVE detected: {title[:50]}")
+            # 配信メタデータを取得（published_at, duration_sec）
+            info = get_video_info(vid, use_cookies=use_cookies)
+            pub = info.get("upload_date")
+            pub_dt = datetime.strptime(pub, "%Y%m%d") if pub else None
+            duration = info.get("duration", 0)
+
             upsert_stream(Stream(
                 video_id=vid, title=title,
+                published_at=pub_dt,
+                duration_sec=duration,
                 is_member_only=is_member_only,
             ))
 
