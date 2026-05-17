@@ -62,7 +62,6 @@ def get_video_info(video_id: str, use_cookies: bool = False) -> dict:
         cmd[1:1] = ["--cookies", str(COOKIE_FILE)]
     cmd.append(f"https://www.youtube.com/watch?v={video_id}")
     try:
-        import subprocess
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
         return json.loads(r.stdout) if r.stdout else {}
     except Exception:
