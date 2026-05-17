@@ -246,3 +246,35 @@ SQLite の `strftime` では `%%` は「リテラルの %」を意味するた�
 - SQLite の strftime に渡すフォーマットはシングルクォート内の `%s`（パーセント1つ）で正しい
 - バグが最初から存在していたが、「リンクが動画先頭に飛ぶ」という挙動が自然に見えていたため長期間気づかれなかった
 - 原因を特定するには、get_conn() 経由と raw sqlite3 接続の結果を比較するのが有効
+
+---
+
+## 2026-05-17: None の published_at で strftime を呼んで AttributeError
+
+### 症状
+配信一覧タブを開くと `AttributeError: 'NoneType' object has no attribute 'strftime'` が発生。
+`app.py` の `show_streams()` 内で `s.published_at.strftime(...)` の行が指摘された。
+
+### 原因
+一部のストリーム（古いデータや収集中のもの）は `published_at` が `NULL`（None）だが、
+配信分析用セレクトボックスの選択肢リストを生成する際に、
+`f"{s.published_at.strftime(...)} {s.title[:60]}"` と何のガードもなく
+`.strftime()` を呼んでいた。`published_at` が None のストリームで必ず落ちる。
+
+### 解決策
+```python
+# Before:
+f"{s.published_at.strftime('%Y-%m-%d')} {s.title[:60]}"
+for s in streams
+
+# After:
+f"{s.published_at.strftime('%Y-%m-%d')} {s.title[:60]}"
+if s.published_at else s.title[:60]
+for s in streams
+```
+同じファイル内の他の `strftime` 呼び出しを全部確認し、すでにガードされているものだけが残っていることを確認した。
+
+### 教訓
+- データクラスの `Optional[datetime]` フィールドに対して `.strftime()` を呼ぶときは**常に** `if ... else` でガードする
+- エラーが出た1行だけ直すのではなく、 grep で同パターンを全量確認する
+- st.dataframe に移行する際に、古い markdown レンダリングでは暗黙に回避されていた None 問題が表面化することがある

@@ -290,44 +290,60 @@ def insert_comments_batch(comments: list[Comment]):
     conn.close()
 
 
-def get_comments_by_viewer(viewer_id: str, limit: int = 500) -> list[tuple[Comment, str, int]]:
+def get_comments_by_viewer(viewer_id: str, limit: int = 0) -> list[tuple[Comment, str, int]]:
     conn = get_conn()
-    rows = conn.execute("""
+    sql = """
         SELECT c.*, s.video_id,
                CAST(COALESCE(strftime('%s', c.published_at), '0') AS INTEGER)
                - CAST(COALESCE(strftime('%s', COALESCE(s.stream_started_at, s.published_at)), '0') AS INTEGER) as time_offset
         FROM comments c
         JOIN streams s ON c.stream_id = s.video_id
         WHERE c.viewer_id = ?
-        ORDER BY c.published_at DESC LIMIT ?
-    """, (viewer_id, limit)).fetchall()
+        ORDER BY c.published_at DESC
+    """
+    params: list = [viewer_id]
+    if limit > 0:
+        sql += " LIMIT ?"
+        params.append(limit)
+    rows = conn.execute(sql, params).fetchall()
     conn.close()
     return [(_row_to_comment(r), r["video_id"], r["time_offset"]) for r in rows]
 
 
-def get_comments_by_stream(stream_id: str, limit: int = 5000) -> list[Comment]:
+def get_comments_by_stream(stream_id: str, limit: int = 0) -> list[Comment]:
     conn = get_conn()
-    rows = conn.execute("""
+    sql = """
         SELECT c.* FROM comments c WHERE c.stream_id = ?
-        ORDER BY c.published_at ASC LIMIT ?
-    """, (stream_id, limit)).fetchall()
+        ORDER BY c.published_at ASC
+    """
+    params: list = [stream_id]
+    if limit > 0:
+        sql += " LIMIT ?"
+        params.append(limit)
+    rows = conn.execute(sql, params).fetchall()
     conn.close()
     return [_row_to_comment(r) for r in rows]
 
 
-def search_comments(query: str, limit: int = 200) -> list[tuple[Comment, str, int]]:
+def search_comments(query: str, limit: int = 0) -> list[tuple[Comment, str, int, str]]:
     conn = get_conn()
-    rows = conn.execute("""
-        SELECT c.*, s.video_id,
+    sql = """
+        SELECT c.*, s.video_id, v.display_name,
                CAST(COALESCE(strftime('%s', c.published_at), '0') AS INTEGER)
                - CAST(COALESCE(strftime('%s', COALESCE(s.stream_started_at, s.published_at)), '0') AS INTEGER) as time_offset
         FROM comments c
         JOIN streams s ON c.stream_id = s.video_id
+        JOIN viewers v ON c.viewer_id = v.channel_id
         WHERE c.message_text LIKE ?
-        ORDER BY c.published_at DESC LIMIT ?
-    """, (f"%{query}%", limit)).fetchall()
+        ORDER BY c.published_at DESC
+    """
+    params: list = [f"%{query}%"]
+    if limit > 0:
+        sql += " LIMIT ?"
+        params.append(limit)
+    rows = conn.execute(sql, params).fetchall()
     conn.close()
-    return [(_row_to_comment(r), r["video_id"], r["time_offset"]) for r in rows]
+    return [(_row_to_comment(r), r["video_id"], r["time_offset"], r["display_name"]) for r in rows]
 
 
 def _row_to_comment(r) -> Comment:
@@ -375,6 +391,50 @@ def _row_to_membership(r) -> MembershipEvent:
         member_month=r["member_month"],
         occurred_at=datetime.fromisoformat(r["occurred_at"]),
     )
+
+
+# ---- Time-series analytics ----
+
+def get_stream_time_series(stream_id: str, bucket_sec: int = 300) -> list[dict]:
+    conn = get_conn()
+    rows = conn.execute("""
+        SELECT
+            CAST(
+                (CAST(strftime('%s', c.published_at) AS INTEGER)
+                 - CAST(strftime('%s', COALESCE(s.stream_started_at, s.published_at)) AS INTEGER))
+                / ? AS INTEGER) * ? AS bucket_start,
+            COUNT(*) AS comment_count,
+            COUNT(DISTINCT c.viewer_id) AS viewer_count
+        FROM comments c
+        JOIN streams s ON c.stream_id = s.video_id
+        WHERE c.stream_id = ?
+        GROUP BY bucket_start
+        ORDER BY bucket_start
+    """, (bucket_sec, bucket_sec, stream_id)).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def get_overall_time_series() -> dict:
+    conn = get_conn()
+    monthly_comments = conn.execute("""
+        SELECT strftime('%Y-%m', published_at) AS month, COUNT(*) AS cnt
+        FROM comments GROUP BY month ORDER BY month
+    """).fetchall()
+    monthly_viewers = conn.execute("""
+        SELECT strftime('%Y-%m', published_at) AS month, COUNT(DISTINCT viewer_id) AS cnt
+        FROM comments GROUP BY month ORDER BY month
+    """).fetchall()
+    monthly_streams = conn.execute("""
+        SELECT strftime('%Y-%m', published_at) AS month, COUNT(*) AS cnt
+        FROM streams GROUP BY month ORDER BY month
+    """).fetchall()
+    conn.close()
+    return {
+        "comments": [dict(r) for r in monthly_comments],
+        "viewers": [dict(r) for r in monthly_viewers],
+        "streams": [dict(r) for r in monthly_streams],
+    }
 
 
 # ---- Helpers ----

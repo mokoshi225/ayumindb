@@ -16,9 +16,10 @@ ayumindb/
 ├── ayumindb/          # コアモジュール
 │   ├── models.py      # Viewer / Stream / Comment / MembershipEvent のデータクラス
 │   ├── db.py          # SQLite CRUD 全操作 + 全文検索 + stream_started_at 対応
+│   │                  # + get_stream_time_series() / get_overall_time_series()
 │   ├── parser.py      # yt-dlp の live_chat JSON をパース
 │   ├── collector.py   # yt-dlp ラッパー（チャット取得）
-│   └── app.py         # Streamlit ダッシュボード（@st.cache_data 高速化）
+│   └── app.py         # Streamlit ダッシュボード（@st.cache_data + Plotly チャート）
 ├── scripts/
 │   ├── backfill.py         # 全配信バックフィル（stream_started_at 保存対応）
 │   ├── live_monitor.py     # リアルタイムライブ監視（stream_started_at 保存対応）
@@ -86,15 +87,17 @@ yt-dlp (live_chat JSON)
         ├── app.py ──→ Streamlit ダッシュボード（http://localhost:8501）
         │                  @st.cache_data(ttl=60) でクエリ結果をキャッシュ
         │                  視聴者一覧は st.dataframe + st.selectbox で軽量表示
+        │                  Plotly 時系列チャート（配信内・全体推移）
         │
         └── export_html.py ──→ 静的 HTML レポート
 ```
 
 ## パフォーマンス設計
 
-- **Streamlit キャッシュ**: `_cached_viewers()`, `_cached_rankings()`, `_cached_stats()` に `@st.cache_data(ttl=60)` を適用。60秒間はSQL再実行しない。
-- **一覧表示**: 6074人の視聴者一覧は `st.button()` × 6074 ではなく `st.dataframe()` + 選択用 `st.selectbox()` で表示。フィルター・ソートはPython上でキャッシュ済みデータに対して実行。
+- **Streamlit キャッシュ**: `_cached_viewers()`, `_cached_rankings()`, `_cached_stats()` に `@st.cache_data(ttl=60)` を適用。60秒間はSQL再実行しない。時系列データも `_cached_stream_time_series()`, `_cached_overall_time_series()` で同様にキャッシュ。
+- **一覧表示**: 視聴者一覧・配信一覧は `st.dataframe()` + 選択用 `st.selectbox()` で表示。フィルター・ソートはPython上でキャッシュ済みデータに対して実行。列クリックソート対応。
 - **ストリーム開始時刻**: `stream_started_at` を最初のコメントから取得。SQLite strftime で時刻差（秒）を計算。
+- **時系列チャート**: Plotly（px.bar / px.line）5分バケットの配信内分析と月別の全体推移。`st.plotly_chart(use_container_width=True)` でレスポンシブ表示。
 
 ## ライブ監視
 
@@ -121,6 +124,9 @@ yt-dlp (live_chat JSON)
 - **静的 HTML** (`export_html.py` → `dashboard.html`): サーバー不要。再生成するまでスナップショット固定
 - コメント履歴は 1行「日時: 内容」のコンパクト形式
 - ▶ リンクで動画該当箇所に直接ジャンプ（`?t={time_offset_sec}`）
+- **配信一覧**: `st.dataframe()` 全カラムクリックソート対応（日時/タイトル/時間/コメント数/視聴者数/コメ/h/人/h）
+- **配信分析**: 配信選択式の Plotly 時系列チャート（コメント数・発言人數、5分バケット）
+- **全体推移**: 月別のコメント数・ユニーク視聴者数・配信数を Plotly で表示
 
 ## メンバーシップ検出
 

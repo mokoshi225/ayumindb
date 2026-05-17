@@ -1,5 +1,7 @@
 import streamlit as st
 import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
 from datetime import datetime
 import time
 
@@ -12,6 +14,7 @@ from ayumindb.db import (
     init_db, get_all_viewers, get_viewer, get_all_streams, get_stream,
     get_comments_by_viewer, get_comments_by_stream, get_membership_events_by_viewer,
     search_comments, get_stats, get_rankings,
+    get_stream_time_series, get_overall_time_series,
 )
 
 st.set_page_config(page_title="AyumiDB", layout="wide", page_icon="📊")
@@ -29,6 +32,14 @@ def _cached_rankings(rank_type: str, limit: int):
 @st.cache_data(ttl=60)
 def _cached_stats():
     return get_stats()
+
+@st.cache_data(ttl=60)
+def _cached_stream_time_series(stream_id: str, bucket_sec: int = 300):
+    return get_stream_time_series(stream_id, bucket_sec)
+
+@st.cache_data(ttl=60)
+def _cached_overall_time_series():
+    return get_overall_time_series()
 
 
 def yt_link(video_id: str, t: int = 0) -> str:
@@ -53,7 +64,7 @@ def main():
         show_search_results(search_query)
         st.divider()
 
-    tab1, tab2, tab3, tab4 = st.tabs(["ダッシュボード", "視聴者一覧", "ランキング", "配信一覧"])
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(["ダッシュボード", "視聴者一覧", "ランキング", "配信一覧", "📈 全体推移"])
 
     with tab1:
         show_dashboard()
@@ -63,23 +74,37 @@ def main():
         show_rankings()
     with tab4:
         show_streams()
+    with tab5:
+        show_overall_trends()
 
 
 def show_search_results(query: str):
-    results = search_comments(query, limit=100)
+    results = search_comments(query)
     if not results:
         st.caption(f"「{query}」に一致するコメントなし")
         return
     st.markdown(f"**「{query}」** の検索結果: {len(results)}件")
-    lines = []
-    for comment, video_id, offset in results:
-        mem = "🔴" if comment.is_member else "  "
-        dt = comment.published_at.strftime("%Y-%m-%d %H:%M")
-        link = yt_markdown(video_id, "▶", max(0, offset))
-        text = comment.message_text[:100]
-        sc = f" 💰{comment.super_chat_amount_text}" if comment.super_chat_amount_text else ""
-        lines.append(f"`{mem}` {dt} {link}: {text}{sc}")
-    st.markdown("\n".join(lines), unsafe_allow_html=True)
+    rows = []
+    for comment, video_id, offset, display_name in results:
+        rows.append({
+            "日時": comment.published_at.strftime("%Y-%m-%d %H:%M"),
+            "名前": display_name,
+            "コメント": comment.message_text[:120],
+            "リンク": yt_link(video_id, max(0, offset)),
+            "メンバー": "🔴" if comment.is_member else "",
+            "スパチャ": comment.super_chat_amount_text or "",
+        })
+    df = pd.DataFrame(rows)
+    st.dataframe(
+        df,
+        column_config={
+            "リンク": st.column_config.LinkColumn("▶", display_text="▶", width="small"),
+            "メンバー": st.column_config.Column(width="small"),
+            "スパチャ": st.column_config.Column(width="small"),
+        },
+        hide_index=True,
+        use_container_width=True,
+    )
 
 
 def show_dashboard():
@@ -193,17 +218,29 @@ def show_viewer_detail(channel_id: str):
             st.markdown(f"- {ev.occurred_at.strftime('%Y-%m-%d')}: **{ev.event_type}** (加入{ev.member_month}ヶ月)")
 
     st.subheader("💬 コメント履歴")
-    result = get_comments_by_viewer(channel_id, limit=500)
+    result = get_comments_by_viewer(channel_id)
     if result:
-        lines = []
-        for comment, video_id, offset in result[:200]:
-            mem = "🔴" if comment.is_member else "  "
-            dt = comment.published_at.strftime("%Y-%m-%d %H:%M")
-            link = yt_markdown(video_id, "▶", max(0, offset))
-            text = comment.message_text[:150]
-            sc = f" 💰{comment.super_chat_amount_text}" if comment.super_chat_amount_text else ""
-            lines.append(f"`{mem}` {dt} {link}: {text}{sc}")
-        st.markdown("\n".join(lines), unsafe_allow_html=True)
+        rows = []
+        for comment, video_id, offset in result:
+            rows.append({
+                "日時": comment.published_at.strftime("%Y-%m-%d %H:%M"),
+                "コメント": comment.message_text[:150],
+                "リンク": yt_link(video_id, max(0, offset)),
+                "メンバー": "🔴" if comment.is_member else "",
+                "スパチャ": comment.super_chat_amount_text or "",
+            })
+        st.caption(f"全 {len(result)} 件")
+        df = pd.DataFrame(rows)
+        st.dataframe(
+            df,
+            column_config={
+                "リンク": st.column_config.LinkColumn("▶", display_text="▶", width="small"),
+                "メンバー": st.column_config.Column(width="small"),
+                "スパチャ": st.column_config.Column(width="small"),
+            },
+            hide_index=True,
+            use_container_width=True,
+        )
     else:
         st.caption("コメント履歴なし")
 
@@ -263,16 +300,52 @@ def show_streams():
         st.info("データベースに配信が登録されていません。")
         return
 
-    for s in streams[:500]:
-        link = yt_markdown(s.video_id, "▶")
-        title = s.title[:80]
-        date = s.published_at.strftime("%Y-%m-%d") if s.published_at else "?"
-        dur = f"{s.duration_sec // 3600}h{(s.duration_sec % 3600) // 60:02d}m" if s.duration_sec else "?"
-        mem = "🔒" if s.is_member_only else ""
-        st.markdown(
-            f"{link} `{date}` {dur} {mem} **{title}**  ({s.chat_count}コメ/{s.unique_viewers}人)",
-            unsafe_allow_html=True,
-        )
+    rows = []
+    for s in streams:
+        dur_min = (s.duration_sec // 60) if s.duration_sec else 0
+        cph = round(s.chat_count / (s.duration_sec / 3600), 1) if s.duration_sec > 0 else 0
+        vph = round(s.unique_viewers / (s.duration_sec / 3600), 1) if s.duration_sec > 0 else 0
+        rows.append({
+            "日時": s.published_at.strftime("%Y-%m-%d") if s.published_at else "?",
+            "タイトル": s.title[:80],
+            "時間(分)": dur_min,
+            "コメント数": s.chat_count,
+            "視聴者数": s.unique_viewers,
+            "コメ/h": cph,
+            "人/h": vph,
+            "リンク": yt_link(s.video_id),
+            "メン限": "🔒" if s.is_member_only else "",
+        })
+    df = pd.DataFrame(rows)
+    st.dataframe(
+        df,
+        column_config={
+            "リンク": st.column_config.LinkColumn("▶", display_text="▶", width="small"),
+            "メン限": st.column_config.Column(width="small"),
+            "時間(分)": st.column_config.NumberColumn("時間(分)", help="分単位"),
+        },
+        hide_index=True,
+        use_container_width=True,
+    )
+
+    # ----- Per-stream time-series charts -----
+    st.markdown("---")
+    st.subheader("📈 配信分析")
+    options = [""] + [
+        f"{s.published_at.strftime('%Y-%m-%d')} {s.title[:60]}"
+        if s.published_at else s.title[:60]
+        for s in streams
+    ]
+    selected_label = st.selectbox("分析する配信を選択", options, key="stream_analysis_selector")
+    if selected_label:
+        for s in streams:
+            label = (
+                f"{s.published_at.strftime('%Y-%m-%d')} {s.title[:60]}"
+                if s.published_at else s.title[:60]
+            )
+            if label == selected_label:
+                _show_stream_charts(s.video_id)
+                break
 
     st.markdown("---")
     st.markdown(
@@ -281,6 +354,93 @@ def show_streams():
         f"<a href='{GITHUB_URL}' style='color: #4af;'>GitHub</a>"
         f"</div>",
         unsafe_allow_html=True,
+    )
+
+
+def _show_stream_charts(video_id: str):
+    data = _cached_stream_time_series(video_id, 300)
+    if not data:
+        st.caption("時系列データがありません")
+        return
+    df = pd.DataFrame(data)
+    df["bucket_min"] = df["bucket_start"] / 60
+
+    col1, col2 = st.columns(2)
+    with col1:
+        fig1 = px.bar(
+            df, x="bucket_min", y="comment_count",
+            labels={"bucket_min": "経過時間(分)", "comment_count": "コメント数"},
+            title="コメント数推移（5分単位）",
+        )
+        fig1.update_layout(height=300, margin=dict(l=20, r=20, t=30, b=20))
+        st.plotly_chart(fig1, use_container_width=True)
+    with col2:
+        fig2 = px.line(
+            df, x="bucket_min", y="viewer_count",
+            labels={"bucket_min": "経過時間(分)", "viewer_count": "発言人数"},
+            title="発言人數推移（5分単位）",
+            markers=True,
+        )
+        fig2.update_layout(height=300, margin=dict(l=20, r=20, t=30, b=20))
+        st.plotly_chart(fig2, use_container_width=True)
+
+    stream_info = get_stream(video_id)
+    if stream_info:
+        dur_str = (
+            f"{stream_info.duration_sec // 3600}h{stream_info.duration_sec % 3600 // 60:02d}m"
+            if stream_info.duration_sec else "?"
+        )
+        st.caption(
+            f"配信時間: {dur_str} | "
+            f"総コメント: {stream_info.chat_count} | "
+            f"ユニーク視聴者: {stream_info.unique_viewers}"
+        )
+
+
+def show_overall_trends():
+    st.subheader("📈 全体推移（月別）")
+    data = _cached_overall_time_series()
+    if not data.get("comments"):
+        st.info("まだデータがありません。")
+        return
+
+    df_comments = pd.DataFrame(data["comments"])
+    df_viewers = pd.DataFrame(data["viewers"])
+    df_streams = pd.DataFrame(data["streams"])
+
+    col1, col2 = st.columns(2)
+    with col1:
+        fig1 = px.bar(
+            df_comments, x="month", y="cnt",
+            labels={"month": "", "cnt": "コメント数"},
+            title="月別コメント数",
+        )
+        fig1.update_layout(height=350, margin=dict(l=20, r=20, t=30, b=40),
+                          xaxis_tickangle=-45)
+        st.plotly_chart(fig1, use_container_width=True)
+    with col2:
+        fig2 = px.line(
+            df_viewers, x="month", y="cnt",
+            labels={"month": "", "cnt": "視聴者数"},
+            title="月別ユニーク視聴者数",
+            markers=True,
+        )
+        fig2.update_layout(height=350, margin=dict(l=20, r=20, t=30, b=40),
+                          xaxis_tickangle=-45)
+        st.plotly_chart(fig2, use_container_width=True)
+
+    fig3 = px.bar(
+        df_streams, x="month", y="cnt",
+        labels={"month": "", "cnt": "配信数"},
+        title="月別配信数",
+    )
+    fig3.update_layout(height=300, margin=dict(l=20, r=20, t=30, b=40),
+                      xaxis_tickangle=-45)
+    st.plotly_chart(fig3, use_container_width=True)
+
+    st.caption(
+        f"期間: {df_comments['month'].iloc[0]} ～ {df_comments['month'].iloc[-1]} "
+        f"（{len(df_comments)}ヶ月）"
     )
 
 
