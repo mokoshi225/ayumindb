@@ -14,29 +14,7 @@ from ayumindb.db import (
     insert_membership_event, update_stream_collection_status, get_stream,
     recompute_viewer_stats, Stream as DBStream,
 )
-from typing import Optional
 from datetime import datetime
-
-
-def _extract_stream_date(filepath: Path) -> Optional[str]:
-    """Chat JSONの最初のメッセージから配信日時を推定"""
-    import json
-    try:
-        with open(filepath) as f:
-            first_line = f.readline().strip()
-            if first_line:
-                msg = json.loads(first_line)
-                actions = msg.get("replayChatItemAction", {}).get("actions", [])
-                for a in actions:
-                    item = a.get("addChatItemAction", {}).get("item", {})
-                    for rkey in ("liveChatTextMessageRenderer", "liveChatViewerEngagementMessageRenderer"):
-                        r = item.get(rkey, {})
-                        ts = r.get("timestampUsec")
-                        if ts:
-                            return datetime.fromtimestamp(int(ts) / 1_000_000).isoformat()
-    except Exception:
-        pass
-    return None
 
 
 def import_chat_to_db(filepath: Path, use_cookies: bool):
@@ -52,14 +30,14 @@ def import_chat_to_db(filepath: Path, use_cookies: bool):
             len(result["comments"]), len(result["viewers"]),
         )
 
-    # 配信日時を補完
-    if s and not s.published_at:
-        pub = _extract_stream_date(filepath)
-        if pub:
-            conn = get_conn()
-            conn.execute("UPDATE streams SET published_at = ? WHERE video_id = ?", (pub, video_id))
-            conn.commit()
-            conn.close()
+    # 配信日時を補完（parse_chat_file の結果から最初のコメントの日付を使う）
+    if s and not s.published_at and result["comments"]:
+        first_ts = result["comments"][0].published_at
+        conn = get_conn()
+        conn.execute("UPDATE streams SET published_at = ? WHERE video_id = ?",
+                     (first_ts.isoformat(), video_id))
+        conn.commit()
+        conn.close()
 
     # 配信の実際の開始時刻を最初のコメントから設定（time_offset の基準）
     if result["comments"]:

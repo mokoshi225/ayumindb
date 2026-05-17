@@ -1,5 +1,39 @@
 # Failures Log
 
+---
+
+## 2026-05-17: published_at がデータ取得日になってしまう
+
+### 症状
+配信一覧で、過去の配信（2021年〜2026年4月）なのに `published_at` が
+データ取得日（2026-05-16）になって表示される。59件のストリームが該当。
+
+### 原因
+`backfill.py` の `_extract_stream_date()` が `.live_chat.json` の
+**1行目**だけを読んで配信日時を推定していた。
+しかし1行目は多くの場合 `liveChatViewerEngagementMessageRenderer`
+（視聴者エンゲージメントメッセージ = リプレイ取得時にYouTubeが挿入する
+システムメッセージ）で、その `timestampUsec` は**リプレイを取得した時刻**
+（＝今日）を示していた。
+実際のチャットメッセージ（`liveChatTextMessageRenderer`）は2行目以降にある。
+
+また、`datetime.fromtimestamp(ts)` にタイムゾーンを指定していなかったが
+これは副次的な問題（システムがJSTなので結果は偶然合っていた）。
+
+### 解決策
+1. `_extract_stream_date()` を削除し、代わりに既にパース済みの
+   `result["comments"][0].published_at`（`parser.py` が正しくJSTで
+   パースした最初のコメント）を使うよう変更。
+2. 既存の59件の誤ったデータは `scripts/migrate_published_at.py` で
+   `stream_started_at` の日付から訂正。
+
+### 教訓
+- `.live_chat.json` の1行目は信頼できない（視聴者エンゲージメントメッセージが入る）
+- パース済みのデータ（`parser.py` の出力）を優先して使う
+- 生ファイルを読む関数は、ファイル構造の前提が変わると壊れる
+- 同じ `timestampUsec` でも `_extract_stream_date`（raw file）と
+  `parse_chat_file`（parser.py）で異なる結果になる可能性を考慮する
+
 このセッションで起きた失敗とその解決策を記録する。
 新しい失敗を見つけたら追記すること。
 

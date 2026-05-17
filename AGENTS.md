@@ -38,7 +38,8 @@ ayumindb/
 │   ├── export_html.py      # DB → 静的 HTML レポート
 │   ├── start_daemons.sh    # tmux 経由で backfill + monitor を一括起動
 │   ├── setup_autostart.sh  # .bashrc に自動起動設定を追記
-│   └── migrate_stream_started_at.py  # 既存ストリームの stream_started_at 移行ツール
+│   ├── migrate_stream_started_at.py  # 既存ストリームの stream_started_at 移行ツール
+│   ├── migrate_published_at.py       # 誤った published_at を stream_started_at から訂正
 ├── data/
 │   ├── ayumindb.db   # SQLite
 │   ├── cookies.txt    # Firefox エクスポート（git管理外）
