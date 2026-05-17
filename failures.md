@@ -387,3 +387,35 @@ for s in streams
 - データクラスの `Optional[datetime]` フィールドに対して `.strftime()` を呼ぶときは**常に** `if ... else` でガードする
 - エラーが出た1行だけ直すのではなく、 grep で同パターンを全量確認する
 - st.dataframe に移行する際に、古い markdown レンダリングでは暗黙に回避されていた None 問題が表面化することがある
+
+---
+
+## 2026-05-17: live_monitor finish_capture で published_at / duration_sec が補完されない
+
+### 症状
+ライブ監視で検出・収集した配信の `published_at` が NULL、
+`duration_sec` が 0 になった。配信一覧で「?」「0」と表示される。
+
+### 原因
+`live_monitor.py` の `finish_capture()` は `get_video_info()` の
+返す `upload_date` / `duration` のみを `published_at` / `duration_sec`
+の補完に使っていた。`get_video_info()` が失敗した場合（配信終了直後で
+メタデータが未確定、レート制限等）、`pub_dt=None` / `duration=0` となり、
+補完条件 `if pub_dt:` / `if duration:` を満たさず何も更新されなかった。
+
+一方 `backfill.py` の `import_chat_to_db()` は最初のコメントから
+`published_at` を補完する処理があるが、`live_monitor.py` だけ
+この処理が不足していた。
+
+### 解決策
+`live_monitor.py` の `finish_capture()` に以下を追加:
+1. `get_video_info()` が `upload_date` を返さなかった場合、
+   最初のコメントのタイムスタンプで `published_at` を補完
+2. `get_video_info()` が `duration` を返さなかった場合、
+   最初と最後のコメントのタイムスタンプの差で `duration_sec` を補完
+
+### 教訓
+- 同じ処理（backfill と live_monitor）に同様のロジックがある場合、
+  どちらか一方だけに修正を加えるともう一方が壊れる
+- `get_video_info()` は確実に値を返すとは限らない。常にフォールバックを用意する
+- 配信の duration はコメントのタイムスタンプ範囲でも近似できる

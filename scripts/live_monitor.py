@@ -74,11 +74,22 @@ def finish_capture(video_id: str, title: str):
         result = parse_chat_file(chat_file)
 
         conn = get_conn()
-        # 配信の実際の開始時刻を最初のコメントから設定
         if result["comments"]:
             first_ts = result["comments"][0].published_at
+            last_ts = result["comments"][-1].published_at
+            # stream_started_at を最初のコメントから設定
             conn.execute("UPDATE streams SET stream_started_at = ? WHERE video_id = ?",
                          (first_ts.isoformat(), video_id))
+            # published_at の補完: get_video_info が取れなかった場合も最初のコメントの日付を使う
+            if not pub_dt:
+                conn.execute("UPDATE streams SET published_at = ? WHERE video_id = ? AND published_at IS NULL",
+                             (first_ts.strftime("%Y-%m-%dT00:00:00"), video_id))
+            # duration_sec の補完: get_video_info が取れなかった場合はコメントのタイムスタンプから算出
+            if not duration:
+                chat_duration = int((last_ts - first_ts).total_seconds())
+                if chat_duration > 0:
+                    conn.execute("UPDATE streams SET duration_sec = ? WHERE video_id = ? AND duration_sec = 0",
+                                 (chat_duration, video_id))
         # published_at / duration_sec を補完（live検出時に取れなかった場合など）
         if pub_dt:
             conn.execute("UPDATE streams SET published_at = ? WHERE video_id = ? AND published_at IS NULL",
