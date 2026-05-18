@@ -71,6 +71,9 @@ def get_video_info(video_id: str, use_cookies: bool = False) -> dict:
 def _run_ytdlp(video_id: str, use_cookies: bool, sleep: str = "3", timeout: int = 600) -> Optional[Path]:
     CHAT_DIR.mkdir(parents=True, exist_ok=True)
     output = CHAT_DIR / f"{video_id}.live_chat.json"
+    # 空のキャッシュファイルを無効化して再ダウンロードを可能にする
+    if output.exists() and output.stat().st_size == 0:
+        output.unlink()
     if output.exists():
         return output
 
@@ -85,6 +88,10 @@ def _run_ytdlp(video_id: str, use_cookies: bool, sleep: str = "3", timeout: int 
         subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
     except subprocess.TimeoutExpired:
         pass
+    # ダウンロード後にファイルが空の場合は失敗として扱う
+    if output.exists() and output.stat().st_size == 0:
+        output.unlink()
+        return None
     return output if output.exists() else None
 
 

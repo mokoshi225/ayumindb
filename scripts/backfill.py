@@ -25,8 +25,10 @@ def import_chat_to_db(filepath: Path, use_cookies: bool):
     if s:
         s.chat_count = len(result["comments"])
         s.unique_viewers = len(result["viewers"])
+        # パース結果が空（0コメント）の場合は、正常完了ではなく「チャットなし」として扱う
+        status = "completed" if result["comments"] else "no_chat"
         update_stream_collection_status(
-            video_id, "completed",
+            video_id, status,
             len(result["comments"]), len(result["viewers"]),
         )
 
@@ -123,10 +125,18 @@ def backfill(batch_size: int = 20, delay: float = 5.0):
                 conn.close()
                 use_cookies = True
         if not chat_file:
-            update_stream_collection_status(video_id, "no_chat")
-            print("⚠️ No chat")
-            processed += 1
-            continue
+            # 一時的なエラー（レート制限、ネットワーク）のためにリトライ
+            wait = min(delay * 2, 30)
+            print(f"⏳ Retry after {wait:.0f}s... ", end="", flush=True)
+            time.sleep(wait)
+            chat_file = download_chat(video_id, use_cookies=use_cookies or (not use_cookies and cookie_available))
+            if chat_file:
+                print("✅ Retry succeeded")
+            else:
+                update_stream_collection_status(video_id, "no_chat")
+                print("⚠️ No chat")
+                processed += 1
+                continue
 
         try:
             cc, vc, mc = import_chat_to_db(chat_file, use_cookies)
