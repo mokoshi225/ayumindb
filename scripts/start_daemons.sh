@@ -19,3 +19,10 @@ if ! tmux has-session -t monitor 2>/dev/null; then
         "python3 -u scripts/live_monitor.py > $LOG_DIR/monitor.log 2>&1"
     echo "Monitor started in tmux session 'monitor'"
 fi
+
+# Streamlit ダッシュボードが動いていなければ起動
+if ! tmux has-session -t dashboard 2>/dev/null; then
+    tmux new-session -d -s dashboard -c "$SCRIPT_DIR" \
+        "streamlit run ayumindb/app.py --server.headless true > $LOG_DIR/dashboard.log 2>&1"
+    echo "Dashboard started in tmux session 'dashboard' (http://localhost:8501)"
+fi
